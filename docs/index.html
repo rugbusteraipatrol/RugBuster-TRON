@@ -27,8 +27,6 @@
   body {
     min-height: 100vh;
     background:
-      radial-gradient(circle at 77% 12%, rgba(239,0,39,.12), transparent 28%),
-      radial-gradient(circle at 42% 48%, rgba(239,0,39,.06), transparent 24%),
       linear-gradient(180deg, #fff 0%, #fbfbfd 45%, #f4f6fb 100%);
     color: var(--text);
     font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
@@ -90,12 +88,11 @@
     box-shadow: 0 12px 30px rgba(239,0,39,.08);
   }
   .hero {
-    min-height: calc(100vh - 72px);
+    min-height: calc(86vh - 72px);
     display: grid;
-    grid-template-columns: minmax(0, .95fr) minmax(320px, 1.05fr);
-    gap: 48px;
-    align-items: center;
-    padding: 70px clamp(20px, 6vw, 96px) 36px;
+    place-items: center;
+    text-align: center;
+    padding: 88px clamp(20px, 6vw, 96px) 56px;
   }
   .eyebrow, .kicker {
     font-family: "Share Tech Mono", monospace;
@@ -127,17 +124,20 @@
     font-size: clamp(58px, 7.4vw, 112px);
     line-height: .92;
     letter-spacing: -.075em;
-    max-width: 760px;
+    max-width: 960px;
   }
   h1 span, h2 span { color: var(--tron-dark); }
   .lead {
     max-width: 630px;
     margin-top: 26px;
+    margin-left: auto;
+    margin-right: auto;
     color: #383c47;
     font-size: clamp(17px, 1.5vw, 21px);
     line-height: 1.55;
   }
   .hero-actions, .button-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 30px; }
+  .hero-actions { justify-content: center; }
   .btn {
     min-width: 154px;
     height: 52px;
@@ -160,115 +160,6 @@
     box-shadow: 0 18px 40px rgba(239,0,39,.24);
   }
   .btn.small { height: 42px; min-width: 130px; font-size: 12px; letter-spacing: .12em; font-family: "Share Tech Mono", monospace; text-transform: uppercase; }
-  .orb-stage {
-    min-height: 535px;
-    display: grid;
-    place-items: center;
-    position: relative;
-    perspective: 1100px;
-  }
-  .hologram {
-    width: min(560px, 82vw);
-    aspect-ratio: 1;
-    border-radius: 50%;
-    position: relative;
-    background:
-      radial-gradient(circle at 50% 50%, rgba(255,255,255,.96) 0 34%, rgba(239,0,39,.08) 35%, rgba(239,0,39,.035) 62%, rgba(0,0,0,.035) 100%),
-      repeating-radial-gradient(circle at 50% 50%, rgba(239,0,39,.30) 0 1px, transparent 1px 5px);
-    box-shadow: inset 0 0 42px rgba(239,0,39,.08), 0 26px 80px rgba(22,24,31,.08);
-    overflow: hidden;
-  }
-  .hologram::before,
-  .hologram::after {
-    content: "";
-    position: absolute;
-    inset: 9%;
-    border-radius: 50%;
-    border: 1px solid rgba(239,0,39,.14);
-    background:
-      repeating-conic-gradient(from 0deg, rgba(239,0,39,.42) 0deg 1deg, transparent 1deg 4deg);
-    mask-image: radial-gradient(circle, transparent 0 53%, #000 54% 58%, transparent 59%);
-    animation: holoSpin 18s linear infinite;
-  }
-  .hologram::after {
-    inset: 16%;
-    opacity: .55;
-    animation-duration: 28s;
-    animation-direction: reverse;
-  }
-  .holo-ring {
-    position: absolute;
-    left: 9%;
-    right: 9%;
-    height: 24%;
-    bottom: 6%;
-    border-radius: 50%;
-    border: 1px solid rgba(35,42,49,.22);
-    background:
-      repeating-radial-gradient(ellipse at center, rgba(35,42,49,.22) 0 1px, transparent 1px 5px);
-    transform: rotateX(74deg);
-    filter: blur(.1px);
-  }
-  .shield-holo {
-    position: absolute;
-    width: 42%;
-    aspect-ratio: 1;
-    left: 29%;
-    top: 25%;
-    background-image:
-      linear-gradient(115deg, rgba(255,255,255,.65), transparent 32%, rgba(239,0,39,.26) 48%, transparent 62%),
-      url("assets/rugbuster-shield.jpg");
-    background-size: cover;
-    background-position: center;
-    clip-path: polygon(50% 2%, 89% 18%, 81% 72%, 50% 98%, 19% 72%, 11% 18%);
-    box-shadow:
-      0 0 34px rgba(239,0,39,.26),
-      0 0 62px rgba(0,188,212,.14);
-    transform-style: preserve-3d;
-    animation: shieldFloat 7s ease-in-out infinite, shieldTurn 14s linear infinite;
-  }
-  .shield-holo::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background:
-      repeating-linear-gradient(90deg, rgba(255,255,255,.28) 0 1px, transparent 1px 7px),
-      linear-gradient(180deg, rgba(255,255,255,.14), rgba(239,0,39,.18));
-    mix-blend-mode: screen;
-  }
-  .shield-holo::after {
-    content: "";
-    position: absolute;
-    inset: 9%;
-    border: 2px solid rgba(239,0,39,.42);
-    clip-path: polygon(50% 2%, 89% 18%, 81% 72%, 50% 98%, 19% 72%, 11% 18%);
-    filter: drop-shadow(0 0 12px rgba(239,0,39,.34));
-  }
-  .holo-node {
-    position: absolute;
-    width: 9px;
-    height: 9px;
-    border: 1px solid rgba(239,0,39,.72);
-    border-radius: 50%;
-    background: rgba(255,255,255,.78);
-    box-shadow: 0 0 18px rgba(239,0,39,.45);
-  }
-  .holo-node.n1 { top: 22%; left: 21%; }
-  .holo-node.n2 { top: 34%; right: 16%; }
-  .holo-node.n3 { bottom: 29%; left: 13%; }
-  .holo-node.n4 { bottom: 35%; right: 28%; }
-  @keyframes holoSpin {
-    to { transform: rotate(360deg); }
-  }
-  @keyframes shieldFloat {
-    0%, 100% { translate: 0 0; }
-    50% { translate: 0 -14px; }
-  }
-  @keyframes shieldTurn {
-    0% { rotate: y -16deg; }
-    50% { rotate: y 16deg; }
-    100% { rotate: y -16deg; }
-  }
   .stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -494,7 +385,7 @@
   @media (max-width: 1060px) {
     nav { grid-template-columns: 1fr auto; }
     nav ul { display: none; }
-    .hero, .scanner-grid, .cia-layout { grid-template-columns: 1fr; }
+    .scanner-grid, .cia-layout { grid-template-columns: 1fr; }
     .stats, .steps, .tiers { grid-template-columns: repeat(2, 1fr); }
     .feed-row { grid-template-columns: 1fr; gap: 6px; }
   }
@@ -502,7 +393,6 @@
     .stats, .module-stack, .api-grid, .steps, .tiers, .api-demo { grid-template-columns: 1fr; }
     .section-head { display: block; }
     .status-row { grid-template-columns: 1fr; }
-    .orb-stage { min-height: 340px; }
   }
 </style>
 </head>
@@ -528,16 +418,6 @@
       <div class="hero-actions">
         <a class="btn primary" href="#scanner">Open Scanner</a>
         <a class="btn" href="#api">API Docs</a>
-      </div>
-    </div>
-    <div class="orb-stage" aria-hidden="true">
-      <div class="hologram">
-        <div class="shield-holo"></div>
-        <div class="holo-ring"></div>
-        <span class="holo-node n1"></span>
-        <span class="holo-node n2"></span>
-        <span class="holo-node n3"></span>
-        <span class="holo-node n4"></span>
       </div>
     </div>
   </header>
