@@ -1766,7 +1766,16 @@ def publish_module_payloads_onchain(payloads: list[dict], state: dict) -> list[d
             break
 
         signed = account.sign_transaction(tx)
-        tx_hash = web3.eth.send_raw_transaction(raw_transaction(signed))
+        try:
+            tx_hash = web3.eth.send_raw_transaction(raw_transaction(signed))
+        except Exception as exc:
+            if "nonce too low" not in str(exc).lower():
+                raise
+            next_nonce = web3.eth.get_transaction_count(account.address, "pending")
+            tx["nonce"] = next_nonce
+            signed = account.sign_transaction(tx)
+            log.warning("  [ONCHAIN] nonce too low; retryujem sa pending nonce=%s", next_nonce)
+            tx_hash = web3.eth.send_raw_transaction(raw_transaction(signed))
         receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
         actual_cost = int(receipt.gasUsed) * int(getattr(receipt, "effectiveGasPrice", 0) or tx["maxFeePerGas"])
         actual_avax = wei_to_avax(actual_cost)
