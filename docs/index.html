@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RugBuster TRON - TRC-20 Security Scanner</title>
+<meta name="description" content="RugBuster TRON live TRC-20 risk scanner powered by the CIA Engine.">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --cyan: #ff3737;
+    --accent: #f2f2f2;
+    --green: #23d18b;
+    --orange: #ffb020;
+    --bg: #070708;
+    --panel: #121316;
+    --card: #1b1c20;
+    --grid: rgba(255,55,55,.055);
+    --text: #f8fafc;
+    --muted: #a5a8b3;
+  }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: Rajdhani, sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+  }
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.08) 2px, rgba(0,0,0,.08) 4px);
+    pointer-events: none;
+  }
+  .z { position: relative; z-index: 2; }
+  nav {
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 28px;
+    padding: 18px 48px;
+    background: rgba(7,7,8,.9);
+    border-bottom: 1px solid rgba(255,55,55,.15);
+    backdrop-filter: blur(12px);
+  }
+  .logo {
+    color: var(--cyan);
+    font-family: Orbitron, monospace;
+    font-weight: 900;
+    font-size: 22px;
+    letter-spacing: 3px;
+    text-decoration: none;
+    text-shadow: 0 0 24px rgba(255,55,55,.65);
+  }
+  .logo span { color: var(--accent); }
+  nav ul { display: flex; list-style: none; gap: 28px; align-items: center; }
+  nav a {
+    color: var(--muted);
+    font-family: "Share Tech Mono", monospace;
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    text-decoration: none;
+  }
+  nav a:hover { color: var(--cyan); }
+  .nav-cta { border: 1px solid var(--accent); color: var(--accent) !important; padding: 8px 18px; }
+  .hero {
+    min-height: 96vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 120px 48px 70px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--green);
+    border: 1px solid rgba(35,209,139,.28);
+    background: rgba(35,209,139,.045);
+    padding: 8px 14px;
+    font-family: "Share Tech Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 22px;
+  }
+  .badge::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 16px rgba(35,209,139,.9);
+  }
+  h1 {
+    font-family: Orbitron, monospace;
+    font-size: clamp(52px, 8vw, 100px);
+    font-weight: 900;
+    line-height: .95;
+    letter-spacing: 0;
+    margin-bottom: 24px;
+  }
+  h1 span { color: var(--cyan); text-shadow: 0 0 34px rgba(255,55,55,.85), 0 0 90px rgba(255,55,55,.35); }
+  .hero p {
+    max-width: 680px;
+    color: var(--muted);
+    font-size: clamp(17px, 2.4vw, 22px);
+    font-weight: 300;
+    margin-bottom: 40px;
+  }
+  .buttons { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 52px;
+    padding: 0 34px;
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    background: transparent;
+    font-family: Orbitron, monospace;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-decoration: none;
+    text-transform: uppercase;
+    clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  }
+  .btn.primary { background: var(--cyan); color: #070708; box-shadow: 0 0 34px rgba(255,55,55,.38); }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border-top: 1px solid rgba(255,55,55,.1);
+    border-bottom: 1px solid rgba(255,55,55,.1);
+    background: var(--panel);
+  }
+  .stat { padding: 28px 22px; text-align: center; border-right: 1px solid rgba(255,55,55,.08); }
+  .stat:last-child { border-right: 0; }
+  .stat strong {
+    display: block;
+    font-family: Orbitron, monospace;
+    font-size: 32px;
+    color: var(--cyan);
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .stat span {
+    color: var(--muted);
+    font-family: "Share Tech Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+  section { max-width: 1240px; margin: 0 auto; padding: 90px 48px; }
+  .section-label {
+    color: var(--accent);
+    font-family: "Share Tech Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 5px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  h2 {
+    font-family: Orbitron, monospace;
+    font-size: clamp(30px, 4vw, 48px);
+    line-height: 1.1;
+    margin-bottom: 18px;
+  }
+  h2 span { color: var(--cyan); }
+  .desc { color: var(--muted); max-width: 720px; font-weight: 300; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2px;
+    margin-top: 46px;
+    border: 1px solid rgba(255,55,55,.08);
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid rgba(255,55,55,.06);
+    padding: 34px 30px;
+    min-height: 178px;
+  }
+  .card h3 {
+    font-family: Orbitron, monospace;
+    font-size: 15px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .card p { color: var(--muted); font-size: 15px; }
+  .terminal-band {
+    max-width: none;
+    background: var(--panel);
+    border-top: 1px solid rgba(255,55,55,.08);
+    border-bottom: 1px solid rgba(255,55,55,.08);
+  }
+  .terminal {
+    max-width: 1240px;
+    margin: 0 auto;
+    background: #020408;
+    border: 1px solid rgba(255,55,55,.2);
+    font-family: "Share Tech Mono", monospace;
+  }
+  .terminal-bar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid rgba(255,55,55,.15); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .r { background: #ff5f57; } .y { background: #febc2e; } .g { background: #28c840; }
+  .terminal-body { padding: 24px; color: var(--muted); line-height: 2; overflow-wrap: anywhere; }
+  .prompt { color: var(--green); } .cmd { color: var(--text); } .red { color: var(--cyan); } .ok { color: var(--green); }
+  .status-list { display: grid; gap: 14px; margin-top: 34px; }
+  .status-row {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 18px;
+    padding: 16px 18px;
+    border: 1px solid rgba(255,55,55,.1);
+    background: rgba(255,55,55,.025);
+  }
+  .status-row b { font-family: "Share Tech Mono", monospace; color: var(--accent); letter-spacing: 2px; text-transform: uppercase; }
+  .status-row span, .status-row a { color: var(--muted); }
+  .status-row a:hover { color: var(--cyan); }
+  footer { padding: 42px 48px; border-top: 1px solid rgba(255,55,55,.08); color: var(--muted); text-align: center; font-family: "Share Tech Mono", monospace; font-size: 12px; letter-spacing: 2px; }
+  @media (max-width: 900px) {
+    nav { position: static; padding: 18px 22px; align-items: flex-start; }
+    nav ul { display: none; }
+    .hero, section { padding-left: 22px; padding-right: 22px; }
+    .stats, .grid { grid-template-columns: 1fr; }
+    .stat, .card { border-right: 0; }
+    .status-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<nav class="z">
+  <a class="logo" href="#">RUGBUSTER<span>TRON</span></a>
+  <ul>
+    <li><a href="#engine">CIA Engine</a></li>
+    <li><a href="#api">API</a></li>
+    <li><a href="#status">Status</a></li>
+    <li><a class="nav-cta" href="https://github.com/rugbusteraipatrol/RugBuster-TRON">GitHub</a></li>
+  </ul>
+</nav>
+
+<main class="z">
+  <header class="hero">
+    <div class="badge">Live on TRON mainnet</div>
+    <h1>RugBuster <span>TRON</span></h1>
+    <p>TRC-20 risk intelligence for wallets, dApps, bots, and launch monitors. Live collector data only; no invented scan counts or placeholder performance claims.</p>
+    <div class="buttons">
+      <a class="btn primary" href="#api">API Docs</a>
+      <a class="btn" href="https://tronscan.org/#/tokens/list">Tronscan</a>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><strong id="scanCount">Loading</strong><span>Live TRON Scans</span></div>
+    <div class="stat"><strong id="latestVerdict">Loading</strong><span>Latest Verdict</span></div>
+    <div class="stat"><strong>5</strong><span>CIA Modules</span></div>
+    <div class="stat"><strong>Mainnet</strong><span>Network</span></div>
+  </div>
+
+  <section id="engine">
+    <div class="section-label">CIA Intelligence Engine</div>
+    <h2>Behavioral Security For <span>TRC-20</span> Tokens</h2>
+    <p class="desc">RugBuster TRON reuses the chain-agnostic behavioral modules from the EVM collectors with TRON-specific data feeds from TronGrid, TRC-20 transfers, and TRON DEX pool discovery.</p>
+    <div class="grid">
+      <div class="card"><h3>Funding Origin</h3><p>Checks deployer funding freshness and transaction history for newly funded launch wallets.</p></div>
+      <div class="card"><h3>Deployment Latency</h3><p>Measures the gap between token creation and first meaningful transfer activity.</p></div>
+      <div class="card"><h3>Transaction Entropy</h3><p>Looks for repeated transfer amounts and bot-like activity patterns.</p></div>
+      <div class="card"><h3>Wash Pattern</h3><p>Detects reciprocal movement and circular flow across early token participants.</p></div>
+      <div class="card"><h3>Holder Cluster Age</h3><p>Compares early holder wallet ages to identify fresh-wallet clusters.</p></div>
+      <div class="card"><h3>TVM Bytecode</h3><p>Flags owner, mint, pause, blacklist, and drain function signatures in TVM-compatible bytecode.</p></div>
+    </div>
+  </section>
+
+  <section id="api" class="terminal-band">
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></div>
+      <div class="terminal-body">
+        <div><span class="prompt">RB&gt;</span> <span class="cmd">curl -X POST "$API_URL/api/tron/scan" \</span></div>
+        <div><span class="cmd">&nbsp;&nbsp;-H "Content-Type: application/json" \</span></div>
+        <div><span class="cmd">&nbsp;&nbsp;-d '{"address":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","use_cached":true}'</span></div>
+        <br>
+        <div><span class="ok">Returns:</span> verdict, reason, risk_score, token metadata, and CIA flag data.</div>
+        <div><span class="red">Stats:</span> <span id="apiStatus">Loading live API status...</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="status">
+    <div class="section-label">Deployment Status</div>
+    <h2>TRON Integration <span>State</span></h2>
+    <p class="desc">This section intentionally shows pending items as pending until they are actually live.</p>
+    <div class="status-list">
+      <div class="status-row"><b>Collector</b><span>Live consolidated Railway worker writing to <code>tron_scans</code>.</span></div>
+      <div class="status-row"><b>Registry Contract</b><span>Pending TRON mainnet deployment. Contract address will appear here after deployment.</span></div>
+      <div class="status-row"><b>Tronscan</b><span>Verification link pending contract deployment.</span></div>
+      <div class="status-row"><b>Telegram</b><span>@RugBusterTron configured, but bot posting is not confirmed yet. Link will be enabled after the 400 error is fixed.</span></div>
+      <div class="status-row"><b>API</b><span id="apiUrlLabel">API URL loading from deployment notes.</span></div>
+    </div>
+  </section>
+</main>
+
+<footer class="z">RUGBUSTER TRON - LIVE COUNTERS COME FROM tron_scans</footer>
+
+<script>
+  const API_BASE = "https://tron-api-production.up.railway.app";
+  const scanCount = document.getElementById("scanCount");
+  const latestVerdict = document.getElementById("latestVerdict");
+  const apiStatus = document.getElementById("apiStatus");
+  const apiUrlLabel = document.getElementById("apiUrlLabel");
+  apiUrlLabel.textContent = API_BASE;
+
+  async function loadStats() {
+    try {
+      const res = await fetch(`${API_BASE}/api/tron/stats`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "stats unavailable");
+      scanCount.textContent = String(data.scan_count);
+      latestVerdict.textContent = data.latest && data.latest.verdict ? data.latest.verdict : "None";
+      apiStatus.textContent = `online · live tron_scans count ${data.scan_count}`;
+    } catch (err) {
+      scanCount.textContent = "Unavailable";
+      latestVerdict.textContent = "Unavailable";
+      apiStatus.textContent = `stats unavailable: ${err.message}`;
+    }
+  }
+
+  loadStats();
+  setInterval(loadStats, 60000);
+</script>
+</body>
+</html>

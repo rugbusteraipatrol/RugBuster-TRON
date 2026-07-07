@@ -82,6 +82,70 @@ CONSOLIDATED_DEX_SCAN_ENABLED=false
 CONSOLIDATED_FALLBACK_SCAN_ENABLED=false
 ```
 
+## TRON API
+
+The TRON API is designed for a separate Railway web service so the consolidated scan worker can keep running without interruption.
+
+### Stats
+
+```bash
+curl https://tron-api-production.up.railway.app/api/tron/stats
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "chain": "tron",
+  "scan_count": 5,
+  "latest": {
+    "address": "TR...",
+    "verdict": "GOOD",
+    "token_name": "Example",
+    "token_symbol": "EX",
+    "created_at": "2026-07-07T..."
+  }
+}
+```
+
+`scan_count` is read live from `tron_scans`; do not treat the example number as a static target.
+
+### Scan
+
+```bash
+curl -X POST https://tron-api-production.up.railway.app/api/tron/scan \
+  -H "Content-Type: application/json" \
+  -d '{"address":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","use_cached":true}'
+```
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "chain": "tron",
+  "address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+  "verdict": "GOOD",
+  "reason": "No major CIA Engine risk flags detected",
+  "risk_score": 39,
+  "token_name": "Tether USD",
+  "token_symbol": "USDT",
+  "cia_flags": {
+    "funding_origin": {},
+    "deployment_latency": {},
+    "tx_entropy": {},
+    "wash_pattern": {},
+    "holder_cluster_age": {},
+    "name_stylometry": {},
+    "contract_backdoor": {}
+  },
+  "source": "postgres_cache"
+}
+```
+
+Use `use_cached:false` to request a live scan if the token is not already present in `tron_scans`.
+
 `RUN_UNTIL_DATE=2099-12-31` is also the collector default to prevent expiry-based worker outages.
 
 ## Contract
