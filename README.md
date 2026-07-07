@@ -2,7 +2,7 @@
 
 AI-powered TRC-20 security scanner and public risk registry for TRON mainnet.
 
-This repo ports the RugBuster Avalanche, BNB, and Base collector architecture to TRON/TVM. The worker uses TronGrid/public full-node HTTP APIs instead of EVM JSON-RPC, scans TRC-20 tokens instead of ERC-20 tokens, and writes normalized scan records to the shared Postgres database in `tron_scans`.
+This repo ports the RugBuster Avalanche, BNB, and Base collector architecture to TRON/TVM. It also includes a consolidated Railway worker that runs Avalanche, BNB, Base, and TRON in one Python process to reduce always-on service costs.
 
 ## Coverage
 
@@ -12,6 +12,26 @@ This repo ports the RugBuster Avalanche, BNB, and Base collector architecture to
 | BNB Smart Chain | `bnb_collector_v1.py` | Live on Railway | `bnb_scans` | EVM |
 | Base | `base_collector_v1.py` | Live on Railway | `base_scans` | EVM |
 | TRON mainnet | `tron_collector_v1.py` | Live on Railway | `tron_scans` | TVM/TRC-20/TronGrid |
+
+## Consolidated Worker
+
+`chains/multichain_worker.py` imports the four chain collectors and gives each chain a short turn in one long-lived process. Each chain keeps its own queue, daily state, output JSONL file, Telegram settings, and Postgres table.
+
+Railway start command:
+
+```bash
+python chains/multichain_worker.py
+```
+
+Expected cost impact:
+
+- Separate AVAX, BNB, Base, and TRON workers: roughly 4 always-on services.
+- Consolidated worker: 1 always-on service.
+- If 3 collectors cost about EUR 12/month before DB costs, the implied service cost is about EUR 4/month each.
+- Expected collector runtime cost after consolidation: about EUR 4/month.
+- Expected savings versus 4 separate collectors: about EUR 12/month before DB costs.
+
+Migration safety rule: verify the consolidated worker first, then stop or remove the separate `avax`, `bnb`, `base`, and `tron` Railway services only after explicit operator confirmation.
 
 ## TRON Data Feeds
 
@@ -36,10 +56,10 @@ The TRON collector preserves the chain-agnostic CIA/V5/V6 behavioral modules:
 
 ## Railway
 
-`railway.json` starts the worker:
+`railway.json` starts the consolidated worker:
 
 ```bash
-python chains/tron/tron_collector_v1.py
+python chains/multichain_worker.py
 ```
 
 Required production variables:
@@ -57,6 +77,9 @@ MAX_TOKENS_PER_DAY=120
 MIN_SCAN_DELAY_MINUTES=2
 MAX_SCAN_DELAY_MINUTES=3
 RUN_UNTIL_DATE=2099-12-31
+CONSOLIDATED_CHAIN_TURN_SLEEP_SECONDS=5
+CONSOLIDATED_DEX_SCAN_ENABLED=false
+CONSOLIDATED_FALLBACK_SCAN_ENABLED=false
 ```
 
 `RUN_UNTIL_DATE=2099-12-31` is also the collector default to prevent expiry-based worker outages.
@@ -99,6 +122,6 @@ npm run compile
 - Contract address: pending mainnet deployment
 - Tronscan verification: pending mainnet deployment
 - Telegram channel: [t.me/RugBusterTron](https://t.me/RugBusterTron)
-- Railway worker: live on Railway service `tron`
+- Railway worker: live on Railway service `tron`; consolidated worker implementation added for AVAX, BNB, Base, and TRON.
 - Scan count: `1+` confirmed write to `tron_scans`
 - Telegram posting: configured for `@RugBusterTron`; Telegram returned `400 Bad Request`, so the bot likely still needs channel admin/posting permission.
