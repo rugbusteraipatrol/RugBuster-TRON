@@ -11,7 +11,7 @@ This repo ports the RugBuster Avalanche, BNB, and Base collector architecture to
 | Avalanche C-Chain | `avax_collector_v6.py` | Live on Railway | `avax_scans` | EVM |
 | BNB Smart Chain | `bnb_collector_v1.py` | Live on Railway | `bnb_scans` | EVM |
 | Base | `base_collector_v1.py` | Live on Railway | `base_scans` | EVM |
-| TRON mainnet | `tron_collector_v1.py` | Deploy-ready | `tron_scans` | TVM/TRC-20/TronGrid |
+| TRON mainnet | `tron_collector_v1.py` | Live on Railway | `tron_scans` | TVM/TRC-20/TronGrid |
 
 ## TRON Data Feeds
 
@@ -99,5 +99,6 @@ npm run compile
 - Contract address: pending mainnet deployment
 - Tronscan verification: pending mainnet deployment
 - Telegram channel: [t.me/RugBusterTron](https://t.me/RugBusterTron)
-- Railway worker: deploy-ready, not confirmed live from this checkout
-- Scan count: `0` in this repo checkout
+- Railway worker: live on Railway service `tron`
+- Scan count: `1+` confirmed write to `tron_scans`
+- Telegram posting: configured for `@RugBusterTron`; Telegram returned `400 Bad Request`, so the bot likely still needs channel admin/posting permission.
