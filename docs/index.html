@@ -3,31 +3,33 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RugBuster TRON - TRC-20 Security Scanner</title>
+<title>RugBuster TRON - TRC-20 Threat Scanner</title>
 <meta name="description" content="RugBuster TRON live TRC-20 risk scanner powered by the CIA Engine.">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
     --tron-red: #ef0027;
-    --tron-red-dark: #8b0019;
+    --tron-dark: #850017;
     --ink: #07070a;
-    --text: #16181f;
+    --text: #1c1f28;
     --muted: #667085;
-    --line: #eceef3;
-    --soft: #f7f8fb;
-    --panel: rgba(255,255,255,.78);
-    --green: #0a9f6b;
-    --orange: #b86b00;
-    --danger: #d92d20;
+    --line: #e6e9f0;
+    --soft: #f6f7fa;
+    --soft-red: #fff4f5;
+    --panel: rgba(255,255,255,.88);
+    --green: #05a66b;
+    --blue: #246bfe;
+    --warn: #b86b00;
+    --bad: #d92d20;
   }
   html { scroll-behavior: smooth; }
   body {
     min-height: 100vh;
     background:
-      radial-gradient(circle at 72% 28%, rgba(239,0,39,.14), transparent 30%),
-      radial-gradient(circle at 54% 62%, rgba(255,153,0,.08), transparent 26%),
-      linear-gradient(180deg, #fff 0%, #fbfbfd 48%, #f4f6fb 100%);
+      radial-gradient(circle at 77% 12%, rgba(239,0,39,.12), transparent 28%),
+      radial-gradient(circle at 42% 48%, rgba(239,0,39,.06), transparent 24%),
+      linear-gradient(180deg, #fff 0%, #fbfbfd 45%, #f4f6fb 100%);
     color: var(--text);
     font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
     overflow-x: hidden;
@@ -37,10 +39,11 @@
     position: fixed;
     inset: 0;
     background-image:
-      radial-gradient(rgba(239,0,39,.16) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(239,0,39,.03) 1px, transparent 1px);
-    background-size: 12px 12px, 72px 72px;
-    mask-image: linear-gradient(90deg, transparent, #000 16%, #000 86%, transparent);
+      radial-gradient(rgba(239,0,39,.18) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(239,0,39,.04) 1px, transparent 1px),
+      linear-gradient(rgba(20,24,32,.035) 1px, transparent 1px);
+    background-size: 13px 13px, 92px 92px, 92px 92px;
+    mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
     pointer-events: none;
   }
   .wrap { position: relative; z-index: 2; }
@@ -49,10 +52,10 @@
     display: grid;
     grid-template-columns: auto 1fr auto;
     align-items: center;
-    gap: 34px;
-    padding: 0 clamp(20px, 5vw, 72px);
-    border-bottom: 1px solid rgba(10,10,10,.06);
-    background: rgba(255,255,255,.72);
+    gap: 30px;
+    padding: 0 clamp(18px, 5vw, 72px);
+    border-bottom: 1px solid rgba(15,20,30,.08);
+    background: rgba(255,255,255,.78);
     backdrop-filter: blur(18px);
     position: sticky;
     top: 0;
@@ -61,7 +64,7 @@
   .brand {
     display: inline-flex;
     align-items: center;
-    gap: 12px;
+    gap: 11px;
     color: var(--ink);
     text-decoration: none;
     font-weight: 900;
@@ -69,26 +72,15 @@
     font-size: 20px;
   }
   .mark {
-    width: 26px;
-    height: 26px;
-    position: relative;
-    transform: rotate(45deg);
-  }
-  .mark::before {
-    content: "";
-    position: absolute;
-    inset: 2px;
+    width: 27px;
+    height: 27px;
     border: 3px solid var(--tron-red);
     clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    transform: rotate(60deg);
   }
   .brand span { color: var(--tron-red); }
-  nav ul { display: flex; list-style: none; gap: clamp(16px, 4vw, 54px); justify-content: center; }
-  nav a {
-    color: #20222a;
-    text-decoration: none;
-    font-size: 15px;
-    font-weight: 600;
-  }
+  nav ul { display: flex; justify-content: center; gap: clamp(16px, 3vw, 44px); list-style: none; }
+  nav a { color: #20232c; text-decoration: none; font-weight: 700; font-size: 14px; }
   .nav-pill {
     border: 1px solid rgba(239,0,39,.18);
     color: var(--tron-red);
@@ -96,29 +88,30 @@
     padding: 10px 18px;
     background: #fff;
     box-shadow: 0 12px 30px rgba(239,0,39,.08);
-    font-weight: 700;
   }
   .hero {
     min-height: calc(100vh - 72px);
     display: grid;
-    grid-template-columns: minmax(0, .95fr) minmax(340px, 1.05fr);
+    grid-template-columns: minmax(0, .95fr) minmax(320px, 1.05fr);
     gap: 48px;
     align-items: center;
-    padding: 72px clamp(20px, 6vw, 96px) 44px;
+    padding: 70px clamp(20px, 6vw, 96px) 36px;
+  }
+  .eyebrow, .kicker {
+    font-family: "Share Tech Mono", monospace;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--tron-red);
+    font-size: 12px;
   }
   .eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    color: var(--tron-red);
     border: 1px solid rgba(239,0,39,.16);
     border-radius: 999px;
     padding: 9px 14px;
     background: rgba(255,255,255,.84);
-    font-family: "Share Tech Mono", monospace;
-    font-size: 12px;
-    letter-spacing: .08em;
-    text-transform: uppercase;
     margin-bottom: 24px;
   }
   .eyebrow::before {
@@ -127,26 +120,26 @@
     height: 8px;
     border-radius: 50%;
     background: var(--green);
-    box-shadow: 0 0 16px rgba(10,159,107,.8);
+    box-shadow: 0 0 16px rgba(5,166,107,.8);
   }
   h1 {
-    font-size: clamp(56px, 7.4vw, 112px);
+    color: var(--ink);
+    font-size: clamp(58px, 7.4vw, 112px);
     line-height: .92;
     letter-spacing: -.075em;
-    color: var(--ink);
-    max-width: 720px;
+    max-width: 760px;
   }
-  h1 .red { color: var(--tron-red-dark); }
+  h1 span, h2 span { color: var(--tron-dark); }
   .lead {
-    max-width: 620px;
+    max-width: 630px;
     margin-top: 26px;
-    color: #353844;
+    color: #383c47;
     font-size: clamp(17px, 1.5vw, 21px);
     line-height: 1.55;
   }
-  .hero-actions { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 30px; }
+  .hero-actions, .button-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 30px; }
   .btn {
-    min-width: 158px;
+    min-width: 154px;
     height: 52px;
     display: inline-flex;
     justify-content: center;
@@ -156,9 +149,9 @@
     background: #fff;
     color: var(--ink);
     text-decoration: none;
-    font-weight: 800;
+    font-weight: 900;
     cursor: pointer;
-    font-size: 15px;
+    font-size: 14px;
   }
   .btn.primary {
     background: var(--tron-red);
@@ -166,20 +159,16 @@
     color: #fff;
     box-shadow: 0 18px 40px rgba(239,0,39,.24);
   }
-  .orb-stage {
-    min-height: 540px;
-    position: relative;
-    display: grid;
-    place-items: center;
-  }
+  .btn.small { height: 42px; min-width: 130px; font-size: 12px; letter-spacing: .12em; font-family: "Share Tech Mono", monospace; text-transform: uppercase; }
+  .orb-stage { min-height: 535px; display: grid; place-items: center; position: relative; }
   .orb {
     width: min(560px, 82vw);
     aspect-ratio: 1;
     border-radius: 50%;
     position: relative;
     background:
-      radial-gradient(circle at 50% 50%, rgba(255,255,255,.92) 0 36%, rgba(239,0,39,.10) 37%, rgba(239,0,39,.035) 60%, rgba(0,0,0,.04) 100%),
-      repeating-radial-gradient(circle at 50% 50%, rgba(239,0,39,.35) 0 1px, transparent 1px 5px);
+      radial-gradient(circle at 50% 50%, rgba(255,255,255,.95) 0 35%, rgba(239,0,39,.10) 36%, rgba(239,0,39,.035) 62%, rgba(0,0,0,.04) 100%),
+      repeating-radial-gradient(circle at 50% 50%, rgba(239,0,39,.34) 0 1px, transparent 1px 5px);
     box-shadow: inset 0 0 42px rgba(239,0,39,.08), 0 26px 80px rgba(22,24,31,.08);
     overflow: hidden;
   }
@@ -195,118 +184,82 @@
     transform: rotate(60deg);
     filter: drop-shadow(0 0 18px rgba(239,0,39,.3));
   }
-  .orb::after {
-    content: "";
-    position: absolute;
-    left: 34%;
-    bottom: 5%;
-    width: 32%;
-    height: 42px;
-    border-radius: 50%;
-    border: 1px solid rgba(20,20,20,.16);
-    background: radial-gradient(ellipse, rgba(0,0,0,.16), transparent 62%);
-  }
   .stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 22px;
-    padding: 0 clamp(20px, 6vw, 96px) 72px;
+    padding: 0 clamp(20px, 6vw, 96px) 74px;
   }
   .stat {
-    min-height: 112px;
-    padding: 22px 0;
-    border-top: 1px solid rgba(22,24,31,.08);
+    min-height: 110px;
+    padding: 21px 0;
+    border-top: 1px solid rgba(22,24,31,.1);
   }
-  .stat span {
-    color: var(--muted);
-    display: block;
-    font-size: 14px;
-    margin-bottom: 22px;
+  .stat span { display: block; margin-bottom: 18px; color: var(--muted); font-size: 14px; }
+  .stat strong { color: var(--ink); font-size: 30px; letter-spacing: -.04em; }
+  section { padding: 82px clamp(20px, 6vw, 96px); }
+  .section-head { display: flex; justify-content: space-between; align-items: end; gap: 28px; margin-bottom: 30px; }
+  h2 { color: var(--ink); font-size: clamp(36px, 4.4vw, 68px); letter-spacing: -.065em; line-height: .96; }
+  .section-copy { max-width: 700px; color: var(--muted); font-size: 17px; line-height: 1.6; }
+  .panel {
+    border: 1px solid rgba(22,24,31,.1);
+    background: var(--panel);
+    box-shadow: 0 24px 80px rgba(22,24,31,.08);
+    backdrop-filter: blur(18px);
   }
-  .stat strong {
-    color: var(--ink);
-    font-size: 30px;
-    letter-spacing: -.04em;
-  }
-  section { padding: 84px clamp(20px, 6vw, 96px); }
-  .section-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: end;
-    gap: 28px;
-    margin-bottom: 30px;
-  }
-  .section-kicker {
-    font-family: "Share Tech Mono", monospace;
-    color: var(--tron-red);
-    letter-spacing: .12em;
-    text-transform: uppercase;
-    font-size: 12px;
-    margin-bottom: 10px;
-  }
-  h2 {
-    color: var(--ink);
-    font-size: clamp(34px, 4vw, 58px);
-    letter-spacing: -.06em;
-    line-height: 1;
-  }
-  .section-copy { color: var(--muted); max-width: 650px; font-size: 17px; line-height: 1.6; }
-  .scanner {
+  .scanner-grid {
     display: grid;
-    grid-template-columns: minmax(320px, .85fr) minmax(360px, 1.15fr);
+    grid-template-columns: minmax(320px, .9fr) minmax(360px, 1.1fr);
     gap: 24px;
     align-items: stretch;
   }
-  .panel {
-    border: 1px solid rgba(22,24,31,.08);
-    border-radius: 28px;
-    background: var(--panel);
-    box-shadow: 0 24px 80px rgba(22,24,31,.08);
-    backdrop-filter: blur(20px);
+  .scan-form { padding: 30px; border-radius: 8px; }
+  .scan-title { font-size: clamp(40px, 5vw, 74px); line-height: .94; letter-spacing: -.065em; color: var(--ink); margin: 14px 0 24px; }
+  .scan-title span { color: var(--tron-red); display: block; }
+  .hint { color: var(--muted); line-height: 1.7; font-size: 15px; }
+  .input-wrap {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    border: 1px solid rgba(22,24,31,.14);
+    background: #fff;
+    margin-top: 28px;
+    height: 58px;
   }
-  .scan-form { padding: 28px; }
-  .input-label {
-    color: var(--muted);
+  .input-prefix {
+    display: grid;
+    place-items: center;
+    border-right: 1px solid rgba(22,24,31,.12);
+    color: var(--tron-red);
     font-family: "Share Tech Mono", monospace;
-    font-size: 12px;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-    margin-bottom: 10px;
   }
   .scan-input {
-    width: 100%;
-    height: 58px;
-    border: 1px solid #d8dce6;
-    border-radius: 18px;
+    border: 0;
+    outline: 0;
     padding: 0 16px;
-    font-family: "Share Tech Mono", monospace;
-    font-size: 14px;
     color: var(--ink);
-    background: #fff;
-    outline: none;
+    font-family: "Share Tech Mono", monospace;
+    background: transparent;
+    min-width: 0;
   }
-  .scan-input:focus {
-    border-color: var(--tron-red);
-    box-shadow: 0 0 0 4px rgba(239,0,39,.08);
-  }
-  .scan-buttons { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
-  .hint { color: var(--muted); font-size: 14px; line-height: 1.5; margin-top: 18px; }
-  .readout { padding: 0; overflow: hidden; }
+  .readout { overflow: hidden; border-radius: 8px; background: #0b0d12; }
   .readout-top {
-    height: 44px;
+    height: 42px;
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 0 18px;
-    background: #101217;
-    color: #fff;
+    background: #171b24;
+    color: #c8d0dd;
+    font-family: "Share Tech Mono", monospace;
+    font-size: 12px;
+    letter-spacing: .12em;
   }
   .dot { width: 10px; height: 10px; border-radius: 50%; }
   .r { background: #ff5f57; } .y { background: #febc2e; } .g { background: #28c840; }
   .terminal {
-    min-height: 364px;
-    padding: 22px;
-    background: #06070a;
+    min-height: 320px;
+    padding: 24px;
+    background: #07090d;
     color: #b9c0cf;
     font-family: "Share Tech Mono", monospace;
     font-size: 13px;
@@ -315,70 +268,137 @@
   }
   .prompt { color: #25d98f; }
   .cmd { color: #fff; }
-  .bad { color: #ff6b6b; }
+  .bad { color: #ff6969; }
   .warn { color: #ffbd5a; }
   .good { color: #44e29d; }
   .cyan { color: #8fd4ff; }
-  .result-grid {
+  .cia-panel { margin-top: 26px; padding: 24px; border-radius: 8px; }
+  .cia-layout {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin-top: 16px;
+    grid-template-columns: 250px 1fr 260px;
+    gap: 18px;
+    align-items: center;
+    margin-top: 22px;
   }
-  .mini {
-    padding: 14px;
-    border-radius: 18px;
+  .target-box, .final-box, .module-card, .api-card, .tier-card {
+    border: 1px solid rgba(22,24,31,.1);
     background: #fff;
-    border: 1px solid rgba(22,24,31,.08);
-  }
-  .mini b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-  .mini strong { color: var(--ink); font-size: 18px; }
-  .module-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin-top: 24px;
-  }
-  .module {
-    min-height: 138px;
     padding: 18px;
-    border-radius: 22px;
-    background: #fff;
-    border: 1px solid rgba(22,24,31,.08);
   }
-  .module h3 { font-size: 15px; color: var(--ink); margin-bottom: 8px; }
-  .module p { color: var(--muted); font-size: 14px; line-height: 1.5; }
-  .status-list {
+  .target-box, .final-box { min-height: 112px; }
+  .target-box b, .final-box b, .module-card b, .api-card b, .tier-card b {
+    color: var(--ink);
+    display: block;
+    margin-bottom: 8px;
+  }
+  .target-box span, .final-box span, .module-card span, .api-card span, .tier-card span {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .module-stack {
     display: grid;
-    gap: 12px;
-    margin-top: 24px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
   }
+  .module-card { min-height: 78px; }
+  .feed-panel, .api-panel { padding: 24px; border-radius: 8px; }
+  .feed-head { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 16px; }
+  .feed-list { display: grid; gap: 10px; }
+  .feed-row {
+    display: grid;
+    grid-template-columns: 72px minmax(160px, 1fr) 82px minmax(220px, 1.35fr);
+    gap: 18px;
+    align-items: center;
+    padding: 15px 12px;
+    border: 1px solid rgba(22,24,31,.08);
+    background: #fff;
+    min-height: 62px;
+  }
+  .mono { font-family: "Share Tech Mono", monospace; letter-spacing: .04em; }
+  .tiny { color: var(--muted); font-size: 12px; }
+  .verdict-good { color: var(--green); font-weight: 900; }
+  .verdict-warn { color: var(--warn); font-weight: 900; }
+  .verdict-danger { color: var(--bad); font-weight: 900; }
+  .api-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 18px; }
+  .api-card { min-height: 78px; }
+  .api-demo {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    padding: 18px;
+    border: 1px solid rgba(22,24,31,.1);
+    background: var(--soft);
+  }
+  .api-input {
+    height: 48px;
+    border: 1px solid rgba(22,24,31,.14);
+    padding: 0 14px;
+    background: #fff;
+    min-width: 0;
+    font-family: "Share Tech Mono", monospace;
+  }
+  .api-box {
+    margin-top: 16px;
+    padding: 20px;
+    background: #101217;
+    color: #d9deea;
+    font-family: "Share Tech Mono", monospace;
+    overflow-wrap: anywhere;
+    line-height: 1.8;
+    border-radius: 8px;
+  }
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    margin-top: 72px;
+  }
+  .step {
+    position: relative;
+    min-height: 150px;
+    text-align: center;
+    padding: 0 22px;
+  }
+  .step::before {
+    content: "";
+    position: absolute;
+    top: 28px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: rgba(22,24,31,.18);
+    z-index: -1;
+  }
+  .step-no {
+    display: inline-grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border: 1px solid rgba(22,24,31,.16);
+    background: #fff;
+    color: var(--tron-red);
+    font-family: "Share Tech Mono", monospace;
+    font-weight: 900;
+    margin-bottom: 24px;
+  }
+  .step h3 { font-size: 14px; letter-spacing: .04em; margin-bottom: 14px; }
+  .step p { color: var(--muted); font-size: 14px; line-height: 1.55; }
+  .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 34px; }
+  .tier-card { min-height: 210px; padding: 28px; border-radius: 8px; }
+  .tier-card h3 { font-size: 26px; color: var(--ink); margin-bottom: 12px; }
+  .tier-card strong { display: block; color: var(--tron-red); font-size: 36px; margin: 22px 0 8px; }
+  .status-list { display: grid; gap: 12px; margin-top: 24px; }
   .status-row {
     display: grid;
     grid-template-columns: 210px 1fr;
     gap: 16px;
     padding: 16px 18px;
-    border-radius: 18px;
     background: #fff;
     border: 1px solid rgba(22,24,31,.08);
   }
-  .status-row b {
-    color: var(--ink);
-    font-family: "Share Tech Mono", monospace;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-    font-size: 12px;
-  }
+  .status-row b { font-family: "Share Tech Mono", monospace; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }
   .status-row span, .status-row a { color: var(--muted); }
-  .api-box {
-    padding: 24px;
-    background: #101217;
-    color: #d9deea;
-    border-radius: 28px;
-    font-family: "Share Tech Mono", monospace;
-    overflow-wrap: anywhere;
-    line-height: 1.8;
-  }
   footer {
     padding: 42px clamp(20px, 6vw, 96px);
     color: var(--muted);
@@ -386,14 +406,18 @@
     font-size: 12px;
     letter-spacing: .08em;
   }
-  @media (max-width: 980px) {
+  @media (max-width: 1060px) {
     nav { grid-template-columns: 1fr auto; }
     nav ul { display: none; }
-    .hero, .scanner { grid-template-columns: 1fr; }
-    .orb-stage { min-height: 360px; }
-    .stats, .module-grid, .result-grid { grid-template-columns: 1fr; }
+    .hero, .scanner-grid, .cia-layout { grid-template-columns: 1fr; }
+    .stats, .steps, .tiers { grid-template-columns: repeat(2, 1fr); }
+    .feed-row { grid-template-columns: 1fr; gap: 6px; }
+  }
+  @media (max-width: 680px) {
+    .stats, .module-stack, .api-grid, .steps, .tiers, .api-demo { grid-template-columns: 1fr; }
     .section-head { display: block; }
     .status-row { grid-template-columns: 1fr; }
+    .orb-stage { min-height: 340px; }
   }
 </style>
 </head>
@@ -403,8 +427,9 @@
     <a class="brand" href="#"><span class="mark"></span> RugBuster <span>TRON</span></a>
     <ul>
       <li><a href="#scanner">Scanner</a></li>
-      <li><a href="#engine">CIA Engine</a></li>
+      <li><a href="#feed">Live Feed</a></li>
       <li><a href="#api">API</a></li>
+      <li><a href="#deploy">Deploy</a></li>
       <li><a href="#status">Status</a></li>
     </ul>
     <a class="nav-pill" href="https://github.com/rugbusteraipatrol/RugBuster-TRON">GitHub</a>
@@ -413,102 +438,154 @@
   <header class="hero">
     <div>
       <div class="eyebrow">Live on TRON mainnet</div>
-      <h1><span class="red">Secure</span> The TRC-20 Web</h1>
-      <p class="lead">A live TRON scanner for wallets, bots, and dApps. RugBuster reads real collector output from <strong>tron_scans</strong> and runs the CIA Engine against TRC-20 contracts.</p>
+      <h1><span>Scan Any</span><br>TRON Token Now</h1>
+      <p class="lead">Paste any TRC-20 address. RugBuster checks live collector records from <strong>tron_scans</strong>, runs CIA Engine flags, and returns the same verdict format used by the Avalanche, BNB, and Base scanners.</p>
       <div class="hero-actions">
-        <a class="btn primary" href="#scanner">Scan Token</a>
-        <a class="btn" href="#api">Use API</a>
+        <a class="btn primary" href="#scanner">Open Scanner</a>
+        <a class="btn" href="#api">API Docs</a>
       </div>
     </div>
-    <div class="orb-stage" aria-hidden="true">
-      <div class="orb"></div>
-    </div>
+    <div class="orb-stage" aria-hidden="true"><div class="orb"></div></div>
   </header>
 
   <div class="stats">
-    <div class="stat"><span>Live TRON Scans</span><strong id="scanCount">Loading</strong></div>
+    <div class="stat"><span>Total TRON Scans</span><strong id="scanCount">Loading</strong></div>
     <div class="stat"><span>Latest Verdict</span><strong id="latestVerdict">Loading</strong></div>
     <div class="stat"><span>Network</span><strong>Mainnet</strong></div>
     <div class="stat"><span>API</span><strong id="apiState">Checking</strong></div>
   </div>
 
   <section id="scanner">
-    <div class="section-head">
-      <div>
-        <div class="section-kicker">TRON token scanner</div>
-        <h2>Scan a TRC-20 token</h2>
-      </div>
-      <p class="section-copy">Enter a TRON contract address. The scanner returns the same verdict shape as the other RugBuster chain pages: verdict, reason, risk score, and CIA module flags.</p>
-    </div>
-
-    <div class="scanner">
+    <div class="scanner-grid">
       <div class="panel scan-form">
-        <div class="input-label">TRC-20 contract address</div>
-        <input id="scanInput" class="scan-input" value="TR3DLthpnDdCGabhVDbD3VMsiJoCXY3bZd" spellcheck="false">
-        <div class="scan-buttons">
-          <button id="scanButton" class="btn primary" type="button">Run Scan</button>
-          <button id="sampleButton" class="btn" type="button">Load Sample</button>
+        <div class="kicker">// live threat scanner</div>
+        <div class="scan-title">Scan Any <span>Token Now</span></div>
+        <p class="hint">Paste any TRON token contract. Our engine analyzes live chain and market signals in real time.</p>
+        <div class="input-wrap">
+          <div class="input-prefix">RB&gt;</div>
+          <input id="scanInput" class="scan-input" value="TR3DLthpnDdCGabhVDbD3VMsiJoCXY3bZd" spellcheck="false" aria-label="TRON token address">
         </div>
-        <p class="hint">Cached scans return instantly from Postgres. If a token is not in <code>tron_scans</code>, the API can run a live metadata/CIA scan.</p>
-        <div class="result-grid">
-          <div class="mini"><b>Verdict</b><strong id="resultVerdict">-</strong></div>
-          <div class="mini"><b>Risk Score</b><strong id="resultRisk">-</strong></div>
-          <div class="mini"><b>Source</b><strong id="resultSource">-</strong></div>
+        <div class="button-row">
+          <button id="scanButton" class="btn primary" type="button">Scan Token</button>
+          <button id="sampleButton" class="btn" type="button">Try Example</button>
         </div>
       </div>
 
       <div class="panel readout">
-        <div class="readout-top"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span style="margin-left:10px;">RUGBUSTER TRON TERMINAL</span></div>
+        <div class="readout-top"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span>RUGBUSTER // THREAT ANALYSIS ENGINE</span></div>
         <div id="terminal" class="terminal">
-          <div><span class="prompt">RB&gt;</span> <span class="cmd">scanner ready --chain tron</span></div>
-          <div>Waiting for TRC-20 address...</div>
+          <div><span class="prompt">RB&gt;</span> System ready. Awaiting target address...</div>
+          <div>// Paste a TRON T address and hit SCAN</div>
+          <div>// Powered by RugBuster API + TRON live collector data</div>
+          <div>// ENGINE: RUGBUSTER TRON v1.0 - ONLINE</div>
+          <br>
+          <div><span class="prompt">RB&gt;</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel cia-panel">
+      <div class="kicker">// cia module trace</div>
+      <h2 style="font-size:28px; margin-top:10px;">Syndicate CIA Scan Path</h2>
+      <div class="cia-layout">
+        <div class="target-box">
+          <b>TARGET TOKEN</b>
+          <span id="targetToken">Awaiting target</span>
+        </div>
+        <div class="module-stack">
+          <div class="module-card"><b>Funding Origin</b><span id="modFunding">waiting</span></div>
+          <div class="module-card"><b>Deploy Latency</b><span id="modLatency">waiting</span></div>
+          <div class="module-card"><b>TX Entropy</b><span id="modEntropy">waiting</span></div>
+          <div class="module-card"><b>Wash Pattern</b><span id="modWash">waiting</span></div>
+          <div class="module-card"><b>Holder Cluster</b><span id="modCluster">waiting</span></div>
+          <div class="module-card"><b>TVM Backdoor</b><span id="modBackdoor">waiting</span></div>
+        </div>
+        <div class="final-box">
+          <b>FINAL SCAN</b>
+          <span id="finalScan">Not analyzed</span>
         </div>
       </div>
     </div>
   </section>
 
-  <section id="engine">
-    <div class="section-head">
-      <div>
-        <div class="section-kicker">CIA Intelligence Engine</div>
-        <h2>Behavioral modules</h2>
+  <section id="feed">
+    <div class="panel feed-panel">
+      <div class="feed-head">
+        <div>
+          <div class="kicker">// live scan feed</div>
+          <h2 style="font-size:30px; margin-top:10px;">Recent Chain Scans</h2>
+        </div>
+        <div class="kicker">10 latest</div>
       </div>
-      <p class="section-copy">The TRON collector adapts the chain-agnostic RugBuster modules to TronGrid, TRC-20 transfers, TVM bytecode, and TRON DEX pool feeds.</p>
-    </div>
-    <div class="module-grid">
-      <div class="module"><h3>Funding Origin</h3><p>Checks whether the deployer wallet was freshly funded or has suspicious launch history.</p></div>
-      <div class="module"><h3>Deployment Latency</h3><p>Measures time from creation to first transfer activity to catch automated launches.</p></div>
-      <div class="module"><h3>Transaction Entropy</h3><p>Detects repeated values, low variance, and bot-like transfer fingerprints.</p></div>
-      <div class="module"><h3>Wash Pattern</h3><p>Flags reciprocal or circular transfer flow among early addresses.</p></div>
-      <div class="module"><h3>Holder Cluster Age</h3><p>Compares holder wallet ages to detect fresh-wallet clusters.</p></div>
-      <div class="module"><h3>TVM Backdoor</h3><p>Scans bytecode for owner, mint, pause, blacklist, and drain signatures.</p></div>
+      <div id="feedList" class="feed-list">
+        <div class="feed-row"><span class="tiny mono">loading</span><b>Fetching tron_scans</b><span class="tiny">-</span><span class="tiny">Waiting for API response...</span></div>
+      </div>
     </div>
   </section>
 
   <section id="api">
-    <div class="section-head">
-      <div>
-        <div class="section-kicker">REST API</div>
-        <h2>Integrate TRON risk data</h2>
+    <div class="panel api-panel">
+      <div class="section-head">
+        <div>
+          <div class="kicker">// tron builder tooling</div>
+          <h2 style="font-size:34px; margin-top:10px;">TRON Builder API</h2>
+        </div>
+        <div class="kicker" id="cacheState">cache score online</div>
       </div>
-      <p class="section-copy">The endpoint mirrors the other chain APIs and returns JSON built from real scan records.</p>
+      <div class="api-grid">
+        <div class="api-card"><b>Public Score Lookup</b><span>GET https://tron-api-production-b482.up.railway.app/api/tron/score?address=T...</span></div>
+        <div class="api-card"><b>Protected Deep Scan</b><span>POST /api/tron/scan with a TRC-20 address. Cached records return from Postgres.</span></div>
+      </div>
+      <div class="kicker">// cache + live score demo</div>
+      <div class="api-demo">
+        <input id="apiInput" class="api-input" value="TR3DLthpnDdCGabhVDbD3VMsiJoCXY3bZd" spellcheck="false" aria-label="API demo TRON address">
+        <button id="apiButton" class="btn primary" type="button">Check API Score</button>
+      </div>
+      <div class="api-box">
+        <div><span class="prompt">curl</span> -X POST https://tron-api-production-b482.up.railway.app/api/tron/scan \</div>
+        <div>&nbsp;&nbsp;-H "Content-Type: application/json" \</div>
+        <div>&nbsp;&nbsp;-d '{"address":"TR3DLthpnDdCGabhVDbD3VMsiJoCXY3bZd","use_cached":true}'</div>
+        <br>
+        <div id="apiStatus">Loading live API status...</div>
+      </div>
+      <div class="button-row">
+        <a class="btn small" href="https://tron-api-production-b482.up.railway.app/">Open API</a>
+        <a class="btn small" href="https://github.com/rugbusteraipatrol/RugBuster-TRON#tron-api">API Docs</a>
+        <a class="btn small" href="https://github.com/rugbusteraipatrol/RugBuster-TRON">Roadmap</a>
+        <a class="btn small" href="#status">Tronscan Verify</a>
+      </div>
     </div>
-    <div class="api-box">
-      <div><span class="prompt">curl</span> -X POST https://tron-api-production-b482.up.railway.app/api/tron/scan \</div>
-      <div>&nbsp;&nbsp;-H "Content-Type: application/json" \</div>
-      <div>&nbsp;&nbsp;-d '{"address":"TR3DLthpnDdCGabhVDbD3VMsiJoCXY3bZd","use_cached":true}'</div>
-      <br>
-      <div id="apiStatus">Loading live API status...</div>
+  </section>
+
+  <section id="deploy">
+    <div class="kicker">// deployment sequence</div>
+    <h2>Activate in <span>4 Steps</span></h2>
+    <div class="steps">
+      <div class="step"><div class="step-no">01</div><h3>CONNECT</h3><p>Link your wallet, Telegram, and selected chains.</p></div>
+      <div class="step"><div class="step-no">02</div><h3>CONFIGURE</h3><p>Set risk thresholds, alert types, and token launches to monitor.</p></div>
+      <div class="step"><div class="step-no">03</div><h3>DEPLOY</h3><p>AI engine goes live against every new TRC-20 contract interaction.</p></div>
+      <div class="step"><div class="step-no">04</div><h3>STAY SAFE</h3><p>Get instant alerts and block threats automatically where integrations support it.</p></div>
+    </div>
+  </section>
+
+  <section id="tiers">
+    <div class="kicker">// access tiers</div>
+    <h2>Choose Your <span>Arsenal</span></h2>
+    <p class="section-copy" style="margin-top:22px;">Free while TRON is in beta. No fake stats, no placeholder accuracy claims, just live scanner data.</p>
+    <div class="tiers">
+      <div class="tier-card"><b>SCOUT</b><h3>Public Scanner</h3><span>Manual TRC-20 checks through the web page and score endpoint.</span><strong>Free</strong></div>
+      <div class="tier-card"><b>GHOST</b><h3>Builder API</h3><span>Cache-backed lookups for dApps, bots, and wallets that need TRON risk data.</span><strong>Beta</strong></div>
+      <div class="tier-card"><b>SENTINEL</b><h3>Alert Ops</h3><span>Telegram alerts and registry writes after contract/channel confirmation.</span><strong>Pending</strong></div>
     </div>
   </section>
 
   <section id="status">
     <div class="section-head">
       <div>
-        <div class="section-kicker">Deployment status</div>
-        <h2>Honest mainnet state</h2>
+        <div class="kicker">// live deployment status</div>
+        <h2>Honest Mainnet State</h2>
       </div>
-      <p class="section-copy">Contract and Telegram links stay pending until they are actually deployed and confirmed working.</p>
+      <p class="section-copy">Links stay pending until they are actually deployed and confirmed working.</p>
     </div>
     <div class="status-list">
       <div class="status-row"><b>Collector</b><span>Live consolidated Railway worker writing to <code>tron_scans</code>.</span></div>
@@ -532,31 +609,28 @@
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
     }[ch]));
   }
-
   function line(html) {
     terminal.insertAdjacentHTML("beforeend", `<div>${html}</div>`);
     terminal.scrollTop = terminal.scrollHeight;
   }
-
-  function resetTerminal() {
-    terminal.innerHTML = "";
-  }
-
+  function resetTerminal() { terminal.innerHTML = ""; }
   function shortAddress(address) {
-    return `${address.slice(0, 6)}...${address.slice(-6)}`;
+    const value = String(address || "");
+    return value.length > 14 ? `${value.slice(0, 7)}...${value.slice(-6)}` : value;
   }
-
-  function validTronAddress(address) {
-    return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address);
-  }
-
+  function validTronAddress(address) { return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address); }
   function verdictClass(verdict) {
     const value = String(verdict || "").toUpperCase();
     if (value === "DANGER") return "bad";
     if (value === "WARN") return "warn";
     return "good";
   }
-
+  function feedVerdictClass(verdict) {
+    const value = String(verdict || "").toUpperCase();
+    if (value === "DANGER") return "verdict-danger";
+    if (value === "WARN") return "verdict-warn";
+    return "verdict-good";
+  }
   function summarizeFlag(flags, key) {
     const value = flags && flags[key] ? flags[key] : {};
     if (!value || typeof value !== "object") return "no data";
@@ -568,6 +642,7 @@
     if (key === "contract_backdoor") return value.has_backdoor ? `${(value.backdoor_functions || []).length} signatures` : "no signatures";
     return "available";
   }
+  function setText(id, value) { document.getElementById(id).textContent = value; }
 
   async function loadStats() {
     try {
@@ -575,22 +650,56 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "stats unavailable");
-      document.getElementById("scanCount").textContent = String(data.scan_count);
-      document.getElementById("latestVerdict").textContent = data.latest?.verdict || "None";
-      document.getElementById("apiState").textContent = "Online";
-      document.getElementById("apiStatus").textContent = `API online. Live tron_scans count: ${data.scan_count}.`;
+      setText("scanCount", String(data.scan_count));
+      setText("latestVerdict", data.latest?.verdict || "None");
+      setText("apiState", "Online");
+      setText("apiStatus", `API online. Live tron_scans count: ${data.scan_count}.`);
+      setText("cacheState", "cache score online");
     } catch (err) {
-      document.getElementById("scanCount").textContent = "Unavailable";
-      document.getElementById("latestVerdict").textContent = "Unavailable";
-      document.getElementById("apiState").textContent = "Check";
-      document.getElementById("apiStatus").textContent = `API stats unavailable: ${err.message}`;
+      setText("scanCount", "Unavailable");
+      setText("latestVerdict", "Unavailable");
+      setText("apiState", "Check");
+      setText("apiStatus", `API stats unavailable: ${err.message}`);
+      setText("cacheState", "cache check failed");
     }
   }
 
-  async function runScan() {
-    const address = document.getElementById("scanInput").value.trim();
+  async function loadRecent() {
+    const feed = document.getElementById("feedList");
+    try {
+      const res = await fetch(`${API_BASE}/api/tron/recent?limit=10`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "recent unavailable");
+      if (!data.items.length) {
+        feed.innerHTML = `<div class="feed-row"><span class="tiny mono">empty</span><b>No TRON scans yet</b><span>-</span><span class="tiny">Collector has not written a row yet.</span></div>`;
+        return;
+      }
+      feed.innerHTML = data.items.map(item => {
+        const date = item.created_at ? new Date(item.created_at) : null;
+        const time = date && !Number.isNaN(date.getTime()) ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "-";
+        const name = item.token_symbol || item.token_name || shortAddress(item.address);
+        const sub = item.token_name && item.token_symbol ? item.token_name : shortAddress(item.address);
+        const risk = item.risk_score === null || item.risk_score === undefined ? "-" : `${item.risk_score}%`;
+        return `<div class="feed-row">
+          <span class="tiny mono">${escapeHtml(time)}</span>
+          <div><b>${escapeHtml(name)}</b><div class="tiny">TRON - ${escapeHtml(sub || "")}</div></div>
+          <span class="${feedVerdictClass(item.verdict)}">${escapeHtml(item.verdict || "UNKNOWN")}</span>
+          <span class="tiny">${escapeHtml(item.verdict || "UNKNOWN")} - RugBuster TRON Risk: ${escapeHtml(risk)}. ${escapeHtml(item.reason || "")}</span>
+        </div>`;
+      }).join("");
+    } catch (err) {
+      feed.innerHTML = `<div class="feed-row"><span class="tiny mono">api</span><b>Recent feed unavailable</b><span>-</span><span class="tiny">${escapeHtml(err.message)}</span></div>`;
+    }
+  }
+
+  async function runScan(addressOverride) {
+    const address = (addressOverride || document.getElementById("scanInput").value).trim();
+    document.getElementById("scanInput").value = address;
+    document.getElementById("apiInput").value = address;
     resetTerminal();
     line(`<span class="prompt">RB&gt;</span> <span class="cmd">scan ${escapeHtml(address || "(empty)")} --chain tron</span>`);
+    setText("targetToken", address ? shortAddress(address) : "Awaiting target");
     if (!validTronAddress(address)) {
       line(`<span class="bad">Invalid TRON address. Use a Base58 TRC-20 contract address starting with T.</span>`);
       return;
@@ -599,10 +708,6 @@
     const button = document.getElementById("scanButton");
     button.disabled = true;
     button.textContent = "Scanning";
-    document.getElementById("resultVerdict").textContent = "-";
-    document.getElementById("resultRisk").textContent = "-";
-    document.getElementById("resultSource").textContent = "-";
-
     try {
       line(`<span class="cyan">Connecting to RugBuster TRON API...</span>`);
       const res = await fetch(`${API_BASE}/api/tron/scan`, {
@@ -614,13 +719,9 @@
       if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
       const cls = verdictClass(data.verdict);
-      document.getElementById("resultVerdict").textContent = data.verdict || "UNKNOWN";
-      document.getElementById("resultRisk").textContent = data.risk_score ?? "UNKNOWN";
-      document.getElementById("resultSource").textContent = data.source || "api";
-
       line(`<span class="good">API response received.</span>`);
       line(`<span class="cyan">Token:</span> <span class="cmd">${escapeHtml(data.token_name || "Unknown")} (${escapeHtml(data.token_symbol || "")})</span>`);
-      line(`<span class="cyan">Address:</span> ${escapeHtml(shortAddress(data.address))}`);
+      line(`<span class="cyan">Address:</span> ${escapeHtml(data.address || address)}</span>`);
       line(`<span class="${cls}">Verdict: ${escapeHtml(data.verdict || "UNKNOWN")} | Risk: ${escapeHtml(data.risk_score ?? "UNKNOWN")}</span>`);
       line(`<span class="cmd">Reason:</span> ${escapeHtml(data.reason || "No reason returned")}`);
       line("");
@@ -628,25 +729,41 @@
       for (const key of ["funding_origin", "deployment_latency", "tx_entropy", "wash_pattern", "holder_cluster_age", "contract_backdoor"]) {
         line(`<span class="prompt">-</span> ${key}: ${escapeHtml(summarizeFlag(data.cia_flags, key))}`);
       }
+      setText("targetToken", `${data.token_symbol || data.token_name || "TRC-20"} - ${shortAddress(data.address || address)}`);
+      setText("finalScan", `${data.verdict || "UNKNOWN"} | Risk ${data.risk_score ?? "UNKNOWN"}`);
+      setText("modFunding", summarizeFlag(data.cia_flags, "funding_origin"));
+      setText("modLatency", summarizeFlag(data.cia_flags, "deployment_latency"));
+      setText("modEntropy", summarizeFlag(data.cia_flags, "tx_entropy"));
+      setText("modWash", summarizeFlag(data.cia_flags, "wash_pattern"));
+      setText("modCluster", summarizeFlag(data.cia_flags, "holder_cluster_age"));
+      setText("modBackdoor", summarizeFlag(data.cia_flags, "contract_backdoor"));
+      setText("apiStatus", JSON.stringify({
+        verdict: data.verdict,
+        risk_score: data.risk_score,
+        source: data.source,
+        reason: data.reason
+      }, null, 2));
+      await loadStats();
+      await loadRecent();
     } catch (err) {
       line(`<span class="bad">Scan failed: ${escapeHtml(err.message)}</span>`);
+      setText("finalScan", `Scan failed: ${err.message}`);
     } finally {
       button.disabled = false;
-      button.textContent = "Run Scan";
+      button.textContent = "Scan Token";
     }
   }
 
-  document.getElementById("scanButton").addEventListener("click", runScan);
-  document.getElementById("sampleButton").addEventListener("click", () => {
-    document.getElementById("scanInput").value = sampleAddress;
-    runScan();
-  });
-  document.getElementById("scanInput").addEventListener("keydown", event => {
-    if (event.key === "Enter") runScan();
-  });
+  document.getElementById("scanButton").addEventListener("click", () => runScan());
+  document.getElementById("sampleButton").addEventListener("click", () => runScan(sampleAddress));
+  document.getElementById("apiButton").addEventListener("click", () => runScan(document.getElementById("apiInput").value));
+  document.getElementById("scanInput").addEventListener("keydown", event => { if (event.key === "Enter") runScan(); });
+  document.getElementById("apiInput").addEventListener("keydown", event => { if (event.key === "Enter") runScan(event.target.value); });
 
   loadStats();
+  loadRecent();
   setInterval(loadStats, 60000);
+  setInterval(loadRecent, 60000);
 </script>
 </body>
 </html>

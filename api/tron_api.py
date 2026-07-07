@@ -97,6 +97,21 @@ def api_record(record: dict[str, Any], source: str) -> dict[str, Any]:
     }
 
 
+def scan_feed_item(row: dict[str, Any]) -> dict[str, Any]:
+    record = load_record(row.get("full_record"))
+    created_at = row.get("created_at")
+    risk_score = record.get("risk_percent")
+    return {
+        "address": row.get("contract_address") or record.get("contract_address") or record.get("address"),
+        "verdict": row.get("label") or record.get("label") or "UNKNOWN",
+        "risk_score": risk_score,
+        "reason": reason_from_record(record),
+        "token_name": record.get("token_name"),
+        "token_symbol": record.get("symbol") or record.get("token_symbol"),
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+    }
+
+
 def latest_record(address: str) -> dict[str, Any] | None:
     conn = db_connect()
     if conn is None:
@@ -153,6 +168,7 @@ def root():
         "name": "RugBuster TRON API",
         "version": API_VERSION,
         "stats_endpoint": "/api/tron/stats",
+        "recent_endpoint": "/api/tron/recent?limit=10",
         "scan_endpoint": "/api/tron/scan",
         "score_endpoint": "/api/tron/score?address=T...",
     })
@@ -189,6 +205,40 @@ def tron_stats():
                         "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else str(row["created_at"]),
                     }
         return jsonify({"ok": True, "chain": "tron", "scan_count": count, "latest": latest})
+    finally:
+        conn.close()
+
+
+@app.route("/api/tron/recent", methods=["GET"])
+def tron_recent():
+    try:
+        limit = int(request.args.get("limit", 10))
+    except (TypeError, ValueError):
+        limit = 10
+    limit = max(1, min(limit, 25))
+
+    conn = db_connect()
+    if conn is None:
+        return jsonify({"ok": False, "error": "database_not_configured", "chain": "tron", "items": []}), 503
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT contract_address, label, created_at, full_record
+                    FROM tron_scans
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall() or []
+        return jsonify({
+            "ok": True,
+            "chain": "tron",
+            "limit": limit,
+            "items": [scan_feed_item(row) for row in rows],
+        })
     finally:
         conn.close()
 
