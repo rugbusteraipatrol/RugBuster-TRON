@@ -72,6 +72,7 @@ class ChainRuntime:
     next_scan_at: float = 0.0
     last_new_pool_refill_at: float = 0.0
     last_top_pool_refill_at: float = 0.0
+    seeded: bool = False
 
     def label(self) -> str:
         return self.config.name.upper()
@@ -102,6 +103,25 @@ class ChainRuntime:
         except Exception as exc:
             log.warning("%s initial block fetch failed: %s", self.label(), exc)
         log.info("%s ready: table=%s start_block=%s output=%s", self.label(), getattr(self.module, "DB_TABLE", "?"), self.current_block, self.output_path)
+        self.enqueue_seed_tokens()
+
+    def enqueue_seed_tokens(self) -> None:
+        if self.seeded:
+            return
+        self.seeded = True
+        raw = os.getenv(f"{self.config.onchain_env_prefix}_SEED_TOKENS", "")
+        for address in [item.strip() for item in raw.split(",") if item.strip()]:
+            self.enqueue({
+                "address": address,
+                "name": "Unknown",
+                "symbol": "",
+                "deployer": "",
+                "block": self.current_block,
+                "timestamp": int(time.time()),
+                "source": "consolidated_seed",
+            })
+        if raw:
+            log.info("%s seeded queue=%d from %s_SEED_TOKENS", self.label(), len(self.pending), self.config.onchain_env_prefix)
 
     def refill_from_gecko(self) -> None:
         now = time.time()
