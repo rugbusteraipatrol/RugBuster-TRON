@@ -89,7 +89,7 @@ The TRON API is designed for a separate Railway web service so the consolidated 
 ### Stats
 
 ```bash
-curl https://tron-api-production.up.railway.app/api/tron/stats
+curl https://tron-api-production-b482.up.railway.app/api/tron/stats
 ```
 
 Response:
@@ -114,7 +114,7 @@ Response:
 ### Scan
 
 ```bash
-curl -X POST https://tron-api-production.up.railway.app/api/tron/scan \
+curl -X POST https://tron-api-production-b482.up.railway.app/api/tron/scan \
   -H "Content-Type: application/json" \
   -d '{"address":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","use_cached":true}'
 ```
