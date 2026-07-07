@@ -56,6 +56,7 @@ class ChainConfig:
     process_func: str
     output_file: str
     gecko_network: str
+    onchain_env_prefix: str
 
 
 @dataclass
@@ -213,16 +214,25 @@ class ChainRuntime:
 
 
 CHAINS = [
-    ChainConfig("avax", "chains.avalanche.avax_collector_v6", "process_token_avax", "syndicate_train_avax_v6.jsonl", "avax"),
-    ChainConfig("bnb", "chains.bnb.bnb_collector_v1", "process_token_BNB", "syndicate_train_bnb_v1.jsonl", "bsc"),
-    ChainConfig("base", "chains.base.base_collector_v1", "process_token_BASE", "syndicate_train_base_v1.jsonl", "base"),
-    ChainConfig("tron", "chains.tron.tron_collector_v1", "process_token", "syndicate_train_tron_v1.jsonl", "tron"),
+    ChainConfig("avax", "chains.avalanche.avax_collector_v6", "process_token_avax", "syndicate_train_avax_v6.jsonl", "avax", "CONSOLIDATED_AVAX"),
+    ChainConfig("bnb", "chains.bnb.bnb_collector_v1", "process_token_BNB", "syndicate_train_bnb_v1.jsonl", "bsc", "CONSOLIDATED_BNB"),
+    ChainConfig("base", "chains.base.base_collector_v1", "process_token_BASE", "syndicate_train_base_v1.jsonl", "base", "CONSOLIDATED_BASE"),
+    ChainConfig("tron", "chains.tron.tron_collector_v1", "process_token", "syndicate_train_tron_v1.jsonl", "tron", "CONSOLIDATED_TRON"),
 ]
+
+
+def apply_chain_onchain_env(config: ChainConfig) -> None:
+    enabled = os.getenv(f"{config.onchain_env_prefix}_ONCHAIN_LOG_ENABLED", "false")
+    publish = os.getenv(f"{config.onchain_env_prefix}_BOT_PUBLISH_TO_REGISTRY", enabled)
+    os.environ["ONCHAIN_LOG_ENABLED"] = enabled
+    os.environ["BOT_PUBLISH_TO_REGISTRY"] = publish
+    os.environ["PUBLISH_MODULES_TO_REGISTRY"] = publish
 
 
 def build_runtimes() -> list[ChainRuntime]:
     runtimes = []
     for config in CHAINS:
+        apply_chain_onchain_env(config)
         module = importlib.import_module(config.module_path)
         if hasattr(module, "GECKOTERMINAL_NEW_POOLS_URL"):
             module.GECKOTERMINAL_NEW_POOLS_URL = (
