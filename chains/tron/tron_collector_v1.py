@@ -866,7 +866,8 @@ def send_telegram_alert(record: dict[str, Any]) -> None:
             timeout=API_TIMEOUT,
         ).raise_for_status()
     except Exception as exc:
-        log.warning("Telegram alert failed: %s", exc)
+        status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+        log.warning("Telegram alert failed with status=%s for chat=%s", status, TRON_TELEGRAM_CHAT_ID)
 
 
 def publish_recent_scan(record: dict[str, Any]) -> None:
