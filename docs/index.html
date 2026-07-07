@@ -721,7 +721,7 @@
       const cls = verdictClass(data.verdict);
       line(`<span class="good">API response received.</span>`);
       line(`<span class="cyan">Token:</span> <span class="cmd">${escapeHtml(data.token_name || "Unknown")} (${escapeHtml(data.token_symbol || "")})</span>`);
-      line(`<span class="cyan">Address:</span> ${escapeHtml(data.address || address)}</span>`);
+      line(`<span class="cyan">Address:</span> ${escapeHtml(data.address || address)}`);
       line(`<span class="${cls}">Verdict: ${escapeHtml(data.verdict || "UNKNOWN")} | Risk: ${escapeHtml(data.risk_score ?? "UNKNOWN")}</span>`);
       line(`<span class="cmd">Reason:</span> ${escapeHtml(data.reason || "No reason returned")}`);
       line("");
