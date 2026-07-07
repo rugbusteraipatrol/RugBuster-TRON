@@ -178,6 +178,43 @@ class ChainRuntime:
         except Exception as exc:
             log.warning("%s daily increment failed: %s", self.label(), exc)
 
+    def publish_onchain_if_supported(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        if not (
+            hasattr(self.module, "module_payloads")
+            and hasattr(self.module, "publish_module_payloads_onchain")
+        ):
+            return []
+        try:
+            state = self.module.load_daily_state() if hasattr(self.module, "load_daily_state") else {}
+            payloads = self.module.module_payloads(record)
+            txs = self.module.publish_module_payloads_onchain(payloads, state)
+            if txs:
+                log.info("%s on-chain writes confirmed: %d txs", self.label(), len(txs))
+            return txs or []
+        except Exception as exc:
+            log.error("%s on-chain writes failed: %s", self.label(), exc)
+            return []
+
+    def emit_post_scan_outputs_if_supported(self, record: dict[str, Any], txs: list[dict[str, Any]]) -> None:
+        append_fn = getattr(self.module, "append_markdown_scan_log", None)
+        if callable(append_fn):
+            try:
+                if len(inspect.signature(append_fn).parameters) == 2:
+                    append_fn(record, txs)
+            except Exception as exc:
+                log.warning("%s markdown scan log failed: %s", self.label(), exc)
+
+        telegram_fn = getattr(self.module, f"send_telegram_alert_{self.config.name}", None)
+        if not callable(telegram_fn) and self.config.name == "base":
+            telegram_fn = getattr(self.module, "send_telegram_alert_BASE", None)
+        if not callable(telegram_fn) and self.config.name == "bnb":
+            telegram_fn = getattr(self.module, "send_telegram_alert_BNB", None)
+        if callable(telegram_fn):
+            try:
+                telegram_fn(record, txs)
+            except Exception as exc:
+                log.warning("%s telegram alert failed: %s", self.label(), exc)
+
     def process_one_if_due(self) -> None:
         if not self.pending or time.time() < self.next_scan_at:
             return
@@ -192,6 +229,8 @@ class ChainRuntime:
             record = self.process(token_data, self.output_path)
             self.seen_at[address] = time.time()
             if record:
+                txs = self.publish_onchain_if_supported(record)
+                self.emit_post_scan_outputs_if_supported(record, txs)
                 self.increment_daily()
                 delay_min = random.randint(
                     int(os.getenv("MIN_SCAN_DELAY_MINUTES", "2")),
