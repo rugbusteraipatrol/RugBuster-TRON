@@ -1,0 +1,11 @@
+.env
+node_modules/
+build/
+artifacts/
+cache/
+*.log
+*.jsonl
+*_scan_log.md
+*_collector_state.json
+__pycache__/
+.pytest_cache/

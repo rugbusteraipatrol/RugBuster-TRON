@@ -1,0 +1,15 @@
+{
+  "name": "rugbuster-tron",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "compile": "tronbox compile",
+    "migrate:mainnet": "tronbox migrate --network mainnet",
+    "deploy:scanner:mainnet": "tronbox migrate --network mainnet --f 1 --to 1"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "tronbox": "^4.8.0",
+    "tronweb": "^6.0.0"
+  }
+}
