@@ -76,7 +76,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 18px;
+    gap: 20px;
     padding: 18px 48px;
     background: rgba(255, 255, 255, 0.9);
     backdrop-filter: blur(12px);
@@ -87,6 +87,7 @@
     font-family: 'Orbitron', monospace;
     font-size: 22px;
     font-weight: 900;
+    min-width: 156px;
     color: var(--neon-cyan);
     text-shadow: 0 0 20px rgba(239, 0, 39, 0.18);
     letter-spacing: 3px;
@@ -98,25 +99,28 @@
 
   .rb-chain-switch {
     display: flex;
-    gap: 10px;
     align-items: center;
+    gap: 18px;
     margin-left: 20px;
     margin-right: auto;
   }
 
   .rb-cs {
-    display: flex;
+    width: 86px;
+    height: 38px;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 38px;
-    min-width: 86px;
-    padding: 0 14px;
+    flex: 0 0 86px;
     font-family: 'Share Tech Mono', monospace;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 2px;
+    line-height: 1;
+    text-align: center;
     color: #fff;
     text-decoration: none;
+    text-transform: uppercase;
     clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
     opacity: .72;
     transition: opacity .18s ease, transform .18s ease, box-shadow .18s ease;
@@ -633,9 +637,13 @@
     text-transform: uppercase;
   }
 
-  @media (max-width: 1120px) {
-    nav { padding: 18px 24px; }
-    .rb-chain-switch, nav ul { display: none; }
+  @media (max-width: 1360px) {
+    nav ul { display: none; }
+  }
+
+  @media (max-width: 900px) {
+    .rb-chain-switch { gap: 10px; margin-left: 8px; }
+    .rb-cs { width: 74px; flex-basis: 74px; font-size: 11px; }
     .features, .terminal-section, .cia-flow-grid, .api-grid { grid-template-columns: 1fr; }
     .stats-bar, .steps, .pricing { grid-template-columns: repeat(2, 1fr); }
   }
@@ -654,12 +662,12 @@
 <div class="z1">
   <nav>
     <a href="#" class="logo">RUGBUSTER</a>
-    <div class="rb-chain-switch">
-      <a class="rb-cs rb-cs-avax" href="https://rugbusteraipatrol.github.io/RugBuster-Avalanche/">AVAX</a>
+    <div class="rb-chain-switch" aria-label="RugBuster chain sites">
+      <a class="rb-cs rb-cs-avax" href="https://rugbuster.io/">AVAX</a>
       <a class="rb-cs rb-cs-bnb" href="https://rugbusteraipatrol.github.io/RugBuster-BNB/">BNB</a>
       <a class="rb-cs rb-cs-base" href="https://rugbusteraipatrol.github.io/RugBuster-Base/">BASE</a>
-      <a class="rb-cs rb-cs-sol" href="#">SOL</a>
-      <a class="rb-cs rb-cs-tron active" href="#">TRON</a>
+      <a class="rb-cs rb-cs-sol" href="https://rugbuster.io/solana/">SOL</a>
+      <a class="rb-cs rb-cs-tron active" href="https://rugbusteraipatrol.github.io/RugBuster-TRON/">TRON</a>
     </div>
     <ul>
       <li><a href="#scanner">Scanner</a></li>
