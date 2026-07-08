@@ -205,6 +205,41 @@ def decode_abi_uint(hex_value: str) -> int:
         return 0
 
 
+def normalize_timestamp_ms(value: Any) -> int:
+    try:
+        ts = int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+    if ts <= 0:
+        return 0
+    if ts > 10_000_000_000:
+        return ts
+    if ts > 1_000_000_000:
+        return ts * 1000
+    return 0
+
+
+def timestamp_sec(value: Any) -> int:
+    ts_ms = normalize_timestamp_ms(value)
+    return int(ts_ms / 1000) if ts_ms else 0
+
+
+def has_deployment_timestamp(token_data: dict[str, Any]) -> bool:
+    source = str(token_data.get("source") or "")
+    return bool(token_data.get("timestamp") and source == "contract_deploy")
+
+
+def printable_token_text(value: str, max_len: int = 80) -> str:
+    text = "".join(ch for ch in str(value or "").strip() if ch.isprintable())
+    if not text or len(text) > max_len:
+        return ""
+    return text
+
+
+def module_status(result: dict[str, Any]) -> str:
+    return str(result.get("status") or "ok")
+
+
 # ---------------------------------------------------------------------------
 # HTTP / TronGrid helpers
 # ---------------------------------------------------------------------------
@@ -352,37 +387,60 @@ def save_to_postgres(record: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 def get_trc20_metadata(contract: str) -> dict[str, Any]:
     contract = normalize_tron_address(contract)
-    info = {"address": contract, "name": "", "symbol": "", "decimals": 0, "total_supply": 0}
+    info = {
+        "address": contract,
+        "name": "",
+        "symbol": "",
+        "decimals": 0,
+        "total_supply": 0,
+        "metadata_source": "tron_constant_contract",
+        "metadata_status": "unavailable",
+        "metadata_error": "",
+    }
     try:
-        info["name"] = decode_abi_string(trigger_constant_contract(contract, "name()"))
-        info["symbol"] = decode_abi_string(trigger_constant_contract(contract, "symbol()"))
+        info["name"] = printable_token_text(decode_abi_string(trigger_constant_contract(contract, "name()")))
+        info["symbol"] = printable_token_text(decode_abi_string(trigger_constant_contract(contract, "symbol()")), max_len=24)
         info["decimals"] = decode_abi_uint(trigger_constant_contract(contract, "decimals()"))
         info["total_supply"] = decode_abi_uint(trigger_constant_contract(contract, "totalSupply()"))
+        info["metadata_status"] = "ok" if info["name"] and info["symbol"] else "incomplete"
     except Exception as exc:
+        info["metadata_error"] = str(exc)
         log.debug("TRC-20 metadata failed for %s: %s", contract, exc)
     return info
 
 
-def get_account_transactions(address: str, limit: int = 50) -> list[dict[str, Any]]:
+def get_account_transactions_checked(address: str, limit: int = 50) -> tuple[list[dict[str, Any]], str, str]:
     try:
         data = trongrid_get(
             f"/v1/accounts/{normalize_tron_address(address)}/transactions",
             {"limit": limit, "only_confirmed": "true", "order_by": "block_timestamp,asc"},
         )
-        return data.get("data", []) if isinstance(data.get("data"), list) else []
-    except Exception:
-        return []
+        rows = data.get("data", []) if isinstance(data.get("data"), list) else []
+        return rows, "ok", ""
+    except Exception as exc:
+        return [], "error", str(exc)
 
 
-def get_token_transfers(address: str, limit: int = 200) -> list[dict[str, Any]]:
+def get_token_transfers_checked(address: str, limit: int = 200) -> tuple[list[dict[str, Any]], str, str]:
     try:
         data = trongrid_get(
             f"/v1/accounts/{normalize_tron_address(address)}/transactions/trc20",
             {"limit": limit, "only_confirmed": "true", "order_by": "block_timestamp,asc"},
         )
-        return data.get("data", []) if isinstance(data.get("data"), list) else []
-    except Exception:
-        return []
+        rows = data.get("data", []) if isinstance(data.get("data"), list) else []
+        return rows, "ok", ""
+    except Exception as exc:
+        return [], "error", str(exc)
+
+
+def get_account_transactions(address: str, limit: int = 50) -> list[dict[str, Any]]:
+    txs, _, _ = get_account_transactions_checked(address, limit)
+    return txs
+
+
+def get_token_transfers(address: str, limit: int = 200) -> list[dict[str, Any]]:
+    transfers, _, _ = get_token_transfers_checked(address, limit)
+    return transfers
 
 
 def get_contract_events(contract: str, event_name: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -621,17 +679,52 @@ def analyze_name_stylometry(token_name: str, ticker: str) -> dict[str, Any]:
 
 
 def detect_funding_origin(deployer: str, deploy_ts: int) -> dict[str, Any]:
-    txs = get_account_transactions(deployer, limit=50) if deployer else []
+    if not deployer:
+        return {
+            "status": "unavailable",
+            "error": "missing_deployer",
+            "funding_tx_count": None,
+            "first_funding_age_sec": None,
+            "fresh_wallet": False,
+            "all_fresh": False,
+            "hop_count": 0,
+            "funders": [],
+        }
+    if not deploy_ts:
+        return {
+            "status": "unavailable",
+            "error": "missing_deployment_timestamp",
+            "funding_tx_count": None,
+            "first_funding_age_sec": None,
+            "fresh_wallet": False,
+            "all_fresh": False,
+            "hop_count": 0,
+            "funders": [],
+        }
+    txs, status, error = get_account_transactions_checked(deployer, limit=50)
+    if status != "ok":
+        return {
+            "status": "error",
+            "error": error,
+            "funding_tx_count": None,
+            "first_funding_age_sec": None,
+            "fresh_wallet": False,
+            "all_fresh": False,
+            "hop_count": 0,
+            "funders": [],
+        }
     incoming = []
     for tx in txs:
         raw = tx.get("raw_data", {}).get("contract", [{}])[0].get("parameter", {}).get("value", {})
         to_addr = normalize_tron_address(raw.get("to_address", ""))
         amount = int(raw.get("amount", 0)) / 1_000_000
-        ts = int(tx.get("block_timestamp", 0) / 1000)
+        ts = timestamp_sec(tx.get("block_timestamp"))
         if to_addr == deployer and ts <= deploy_ts:
             incoming.append({"from": normalize_tron_address(raw.get("owner_address", "")), "amount": amount, "timestamp": ts})
     first_funding_age = deploy_ts - incoming[-1]["timestamp"] if incoming else -1
     return {
+        "status": "ok",
+        "error": "",
         "funding_tx_count": len(incoming),
         "first_funding_age_sec": first_funding_age,
         "fresh_wallet": 0 <= first_funding_age < 3600,
@@ -642,18 +735,60 @@ def detect_funding_origin(deployer: str, deploy_ts: int) -> dict[str, Any]:
 
 
 def detect_deployment_latency(token: str, deploy_ts: int) -> dict[str, Any]:
-    transfers = get_token_transfers(token, limit=50)
+    if not deploy_ts:
+        return {
+            "status": "unavailable",
+            "error": "missing_deployment_timestamp",
+            "first_transfer_ts": None,
+            "latency_ms": None,
+            "is_sniped": False,
+        }
+    transfers, status, error = get_token_transfers_checked(token, limit=50)
+    if status != "ok":
+        return {
+            "status": "error",
+            "error": error,
+            "first_transfer_ts": None,
+            "latency_ms": None,
+            "is_sniped": False,
+        }
     first_ts = 0
     for transfer in transfers:
-        ts = int(transfer.get("block_timestamp", 0) / 1000)
+        ts = timestamp_sec(transfer.get("block_timestamp"))
         if ts and (not first_ts or ts < first_ts):
             first_ts = ts
-    latency_ms = (first_ts - deploy_ts) * 1000 if first_ts and deploy_ts else -1
-    return {"first_transfer_ts": first_ts, "latency_ms": latency_ms, "is_sniped": 0 <= latency_ms <= 30_000}
+    if not first_ts:
+        return {
+            "status": "no_transfers",
+            "error": "",
+            "first_transfer_ts": None,
+            "latency_ms": None,
+            "is_sniped": False,
+        }
+    latency_ms = (first_ts - deploy_ts) * 1000
+    if latency_ms < 0:
+        return {
+            "status": "invalid",
+            "error": "first_transfer_before_deployment_timestamp",
+            "first_transfer_ts": first_ts,
+            "latency_ms": None,
+            "is_sniped": False,
+        }
+    return {"status": "ok", "error": "", "first_transfer_ts": first_ts, "latency_ms": latency_ms, "is_sniped": latency_ms <= 30_000}
 
 
 def detect_tx_entropy(token: str) -> dict[str, Any]:
-    transfers = get_token_transfers(token, limit=200)
+    transfers, status, error = get_token_transfers_checked(token, limit=200)
+    if status != "ok":
+        return {
+            "status": "error",
+            "error": error,
+            "tx_count": None,
+            "unique_wallets": None,
+            "dominant_amount": None,
+            "dominant_amount_ratio": None,
+            "is_bot_pattern": False,
+        }
     amounts = []
     wallets = []
     for transfer in transfers:
@@ -671,6 +806,8 @@ def detect_tx_entropy(token: str) -> dict[str, Any]:
     unique_wallets = len({normalize_tron_address(w) for w in wallets if w})
     repeated_ratio = dominant_count / max(len(rounded), 1)
     return {
+        "status": "ok",
+        "error": "",
         "tx_count": len(transfers),
         "unique_wallets": unique_wallets,
         "dominant_amount": dominant_amount,
@@ -680,7 +817,15 @@ def detect_tx_entropy(token: str) -> dict[str, Any]:
 
 
 def detect_wash_pattern(token: str) -> dict[str, Any]:
-    transfers = get_token_transfers(token, limit=200)
+    transfers, status, error = get_token_transfers_checked(token, limit=200)
+    if status != "ok":
+        return {
+            "status": "error",
+            "error": error,
+            "wash_detected": False,
+            "reciprocal_edges": None,
+            "edge_count": None,
+        }
     edges = Counter()
     for transfer in transfers:
         src = normalize_tron_address(transfer.get("from", ""))
@@ -691,11 +836,22 @@ def detect_wash_pattern(token: str) -> dict[str, Any]:
     for (src, dst), count in edges.items():
         if edges.get((dst, src), 0):
             reciprocal += min(count, edges[(dst, src)])
-    return {"wash_detected": reciprocal >= 4, "reciprocal_edges": reciprocal, "edge_count": len(edges)}
+    return {"status": "ok", "error": "", "wash_detected": reciprocal >= 4, "reciprocal_edges": reciprocal, "edge_count": len(edges)}
 
 
 def detect_holder_cluster_age(token: str) -> dict[str, Any]:
-    transfers = get_token_transfers(token, limit=200)
+    transfers, status, error = get_token_transfers_checked(token, limit=200)
+    if status != "ok":
+        return {
+            "status": "error",
+            "error": error,
+            "total_checked": None,
+            "wallets_with_age": None,
+            "fresh_wallet_count": None,
+            "fresh_wallet_ratio": None,
+            "median_age_sec": None,
+            "is_bot_farm": False,
+        }
     wallets = []
     for transfer in transfers:
         wallets.extend([normalize_tron_address(transfer.get("from", "")), normalize_tron_address(transfer.get("to", ""))])
@@ -704,8 +860,10 @@ def detect_holder_cluster_age(token: str) -> dict[str, Any]:
     ages = []
     now = int(time.time())
     for wallet in unique_wallets:
-        txs = get_account_transactions(wallet, limit=10)
-        first = min([int(tx.get("block_timestamp", 0) / 1000) for tx in txs if tx.get("block_timestamp")] or [0])
+        txs, wallet_status, _ = get_account_transactions_checked(wallet, limit=10)
+        if wallet_status != "ok":
+            continue
+        first = min([timestamp_sec(tx.get("block_timestamp")) for tx in txs if tx.get("block_timestamp")] or [0])
         if first:
             age = now - first
             ages.append(age)
@@ -713,6 +871,8 @@ def detect_holder_cluster_age(token: str) -> dict[str, Any]:
                 fresh += 1
     fresh_ratio = fresh / max(len(ages), 1)
     return {
+        "status": "ok",
+        "error": "",
         "total_checked": len(unique_wallets),
         "wallets_with_age": len(ages),
         "fresh_wallet_count": fresh,
@@ -740,8 +900,22 @@ BACKDOOR_SIGNATURES = {
 
 def detect_contract_backdoor(token: str) -> dict[str, Any]:
     bytecode = get_contract_bytecode(token).lower()
+    if not bytecode:
+        return {
+            "status": "unavailable",
+            "error": "bytecode_unavailable",
+            "has_backdoor": False,
+            "backdoor_functions": [],
+            "has_mint_function": False,
+            "has_pause_function": False,
+            "has_blacklist": False,
+            "has_drain_function": False,
+            "backdoor_risk_score": 0,
+        }
     found = [name for sig, name in BACKDOOR_SIGNATURES.items() if sig in bytecode]
     return {
+        "status": "ok",
+        "error": "",
         "has_backdoor": bool(found),
         "backdoor_functions": found,
         "has_mint_function": any("mint" in name for name in found),
@@ -771,7 +945,7 @@ def predict_lifecycle(cia: dict[str, Any], creator_rug_rate: float) -> dict[str,
     return {"estimated_rug_minutes": -1, "confidence": 0.0, "prediction_text": "No imminent rug signals"}
 
 
-def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any], v6: dict[str, Any], deployer_balance: float) -> tuple[int, list[str]]:
+def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any], v6: dict[str, Any], deployer_balance: Optional[float]) -> tuple[int, list[str]]:
     risk = 15
     reasons = []
     checks = [
@@ -782,7 +956,7 @@ def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any]
         (cia.get("cluster", {}).get("is_bot_farm"), 16, "fresh holder cluster"),
         (v5.get("name_style", {}).get("name_scam_score", 0) >= 50, 10, "scam-name stylometry"),
         (v6.get("backdoor", {}).get("has_backdoor"), 18, "owner/backdoor bytecode signatures"),
-        (deployer_balance < 25, 6, "low deployer TRX balance"),
+        (isinstance(deployer_balance, (int, float)) and deployer_balance < 25, 6, "low deployer TRX balance"),
         (not meta.get("name") or not meta.get("symbol"), 10, "missing TRC-20 metadata"),
     ]
     for active, points, reason in checks:
@@ -820,6 +994,27 @@ def run_v5_analysis(token_name: str, symbol: str, deploy_ts: int, tx_amounts: li
 
 def run_v6_analysis(token: str) -> dict[str, Any]:
     return {"backdoor": detect_contract_backdoor(token)}
+
+
+def confidence_from_modules(cia: dict[str, Any], v6: dict[str, Any]) -> dict[str, Any]:
+    modules = {
+        "funding_origin": cia.get("funding", {}),
+        "deployment_latency": cia.get("latency", {}),
+        "tx_entropy": cia.get("entropy", {}),
+        "wash_pattern": cia.get("wash", {}),
+        "holder_cluster_age": cia.get("cluster", {}),
+        "contract_backdoor": v6.get("backdoor", {}),
+    }
+    missing = [
+        name
+        for name, result in modules.items()
+        if module_status(result) in {"error", "unavailable", "invalid"}
+    ]
+    return {
+        "level": "LOW" if len(missing) >= 3 else "NORMAL",
+        "missing_module_count": len(missing),
+        "missing_modules": missing,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -919,24 +1114,36 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
         return None
     meta = get_trc20_metadata(address)
     if token_data.get("name") and not meta.get("name"):
-        meta["name"] = token_data.get("name")
+        meta["name"] = printable_token_text(token_data.get("name"))
+        meta["metadata_source"] = "feed_fallback"
+        meta["metadata_status"] = "fallback"
     if token_data.get("symbol") and not meta.get("symbol"):
-        meta["symbol"] = token_data.get("symbol")
+        meta["symbol"] = printable_token_text(token_data.get("symbol"), max_len=24)
+        meta["metadata_source"] = "feed_fallback"
+        meta["metadata_status"] = "fallback"
     if REQUIRE_TRC20_METADATA and (not meta.get("name") or not meta.get("symbol")):
         log.info("Skipping %s without valid TRC-20 metadata.", address)
         return None
 
     deployer = normalize_tron_address(token_data.get("deployer", ""))
-    deploy_ts = int(token_data.get("timestamp") or time.time())
-    deployer_balance = get_trx_balance(deployer) if deployer else 0.0
+    deploy_ts = timestamp_sec(token_data.get("timestamp")) if has_deployment_timestamp(token_data) else 0
+    deployer_balance = get_trx_balance(deployer) if deployer else None
     creator_stats = get_creator_stats(deployer)
     cia = run_cia_analysis(address, deployer, deploy_ts)
-    tx_amounts = [cia.get("entropy", {}).get("dominant_amount", 0)]
-    holder_count = cia.get("cluster", {}).get("total_checked", 0)
+    dominant_amount = cia.get("entropy", {}).get("dominant_amount")
+    tx_amounts = [dominant_amount] if isinstance(dominant_amount, (int, float)) else []
+    holder_count = cia.get("cluster", {}).get("total_checked")
+    holder_count = holder_count if isinstance(holder_count, int) else 0
     v5 = run_v5_analysis(meta.get("name", ""), meta.get("symbol", ""), deploy_ts, tx_amounts, holder_count, cia, creator_stats["rug_rate"])
     v6 = run_v6_analysis(address)
     risk_percent, risk_reasons = calculate_risk(meta, cia, v5, v6, deployer_balance)
     label = risk_status_from_percent(risk_percent)
+    confidence = confidence_from_modules(cia, v6)
+    if confidence["level"] == "LOW":
+        risk_reasons.append("low confidence: insufficient TRON data")
+        if label == "GOOD":
+            label = "WARN"
+        risk_percent = max(risk_percent, 40)
 
     record = {
         "chain": "TRON",
@@ -948,13 +1155,17 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
         "total_supply": str(meta.get("total_supply", 0)),
         "deployer": deployer,
         "deployer_balance_trx": deployer_balance,
-        "deploy_timestamp": deploy_ts,
+        "deploy_timestamp": deploy_ts or None,
+        "metadata_source": meta.get("metadata_source"),
+        "metadata_status": meta.get("metadata_status"),
+        "metadata_error": meta.get("metadata_error", ""),
         "source": token_data.get("source", "unknown"),
         "pair": token_data.get("pair", ""),
         "label": label,
         "risk_percent": risk_percent,
         "risk_reasons": risk_reasons,
         "creator_stats": creator_stats,
+        "confidence": confidence,
         "cia": cia,
         "v5": v5,
         "v6": v6,

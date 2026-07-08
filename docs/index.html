@@ -923,8 +923,12 @@
   function summarizeFlag(flags, key) {
     const value = flags && flags[key] ? flags[key] : {};
     if (!value || typeof value !== "object") return "no data";
+    if (["error", "unavailable", "invalid"].includes(value.status)) {
+      const reason = value.error ? ` - ${String(value.error).replaceAll("_", " ")}` : "";
+      return `N/A${reason}`;
+    }
     if (key === "funding_origin") return value.all_fresh ? "fresh funding detected" : `${value.funding_tx_count ?? 0} funding tx`;
-    if (key === "deployment_latency") return value.is_sniped ? "sniped launch" : `${value.latency_ms ?? "unknown"} ms`;
+    if (key === "deployment_latency") return value.is_sniped ? "sniped launch" : (value.latency_ms == null ? "N/A - deployment timestamp unavailable" : `${value.latency_ms} ms`);
     if (key === "tx_entropy") return value.is_bot_pattern ? "bot-like entropy" : `${value.tx_count ?? 0} tx sampled`;
     if (key === "wash_pattern") return value.wash_detected ? "wash pattern" : `${value.edge_count ?? 0} edges`;
     if (key === "holder_cluster_age") return value.is_bot_farm ? "fresh cluster" : `${value.total_checked ?? 0} holders checked`;
