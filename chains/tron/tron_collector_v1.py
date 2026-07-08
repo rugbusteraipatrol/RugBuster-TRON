@@ -653,14 +653,39 @@ SCAM_NAME_PATTERNS = [
     "official", "real", "v2", "v3", "sun", "just", "trx", "tron",
 ]
 
+KNOWN_BRAND_TOKENS = {
+    ("bitcoin", "btc"),
+    ("ethereum", "eth"),
+    ("litecoin", "ltc"),
+    ("dogecoin", "doge"),
+    ("cardano", "ada"),
+    ("ripple", "xrp"),
+    ("solana", "sol"),
+    ("binance coin", "bnb"),
+    ("avalanche", "avax"),
+    ("chainlink", "link"),
+    ("polygon", "matic"),
+    ("polkadot", "dot"),
+}
+
 
 def analyze_name_stylometry(token_name: str, ticker: str) -> dict[str, Any]:
     name_lower = (token_name or "").lower()
     ticker_lower = (ticker or "").lower()
     matched = [p for p in SCAM_NAME_PATTERNS if p in name_lower or p in ticker_lower]
+    brand_match = next(
+        (
+            {"name": brand_name, "symbol": brand_symbol.upper()}
+            for brand_name, brand_symbol in KNOWN_BRAND_TOKENS
+            if name_lower == brand_name or ticker_lower == brand_symbol
+        ),
+        None,
+    )
     result = {
-        "name_scam_score": min(len(matched) * 25, 100),
+        "name_scam_score": min(len(matched) * 25 + (75 if brand_match else 0), 100),
         "matched_patterns": matched,
+        "brand_impersonation": bool(brand_match),
+        "impersonated_brand": brand_match or {},
         "similar_to_previous": False,
         "most_similar_name": "",
         "similarity_score": 0.0,
@@ -948,14 +973,19 @@ def predict_lifecycle(cia: dict[str, Any], creator_rug_rate: float) -> dict[str,
 def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any], v6: dict[str, Any], deployer_balance: Optional[float]) -> tuple[int, list[str]]:
     risk = 15
     reasons = []
+    style = v5.get("name_style", {})
+    backdoor = v6.get("backdoor", {})
+    entropy = cia.get("entropy", {})
+    wash = cia.get("wash", {})
+    backdoor_score = int(backdoor.get("backdoor_risk_score", 0) or 0)
     checks = [
         (cia.get("funding", {}).get("all_fresh"), 16, "fresh deployer funding"),
         (cia.get("latency", {}).get("is_sniped"), 12, "sniped first transfer"),
-        (cia.get("entropy", {}).get("is_bot_pattern"), 14, "bot-like transfer entropy"),
-        (cia.get("wash", {}).get("wash_detected"), 18, "wash transfer pattern"),
+        (entropy.get("is_bot_pattern"), 14, "bot-like transfer entropy"),
+        (wash.get("wash_detected"), 18, "wash transfer pattern"),
         (cia.get("cluster", {}).get("is_bot_farm"), 16, "fresh holder cluster"),
-        (v5.get("name_style", {}).get("name_scam_score", 0) >= 50, 10, "scam-name stylometry"),
-        (v6.get("backdoor", {}).get("has_backdoor"), 18, "owner/backdoor bytecode signatures"),
+        (style.get("name_scam_score", 0) >= 50, 10, "scam-name stylometry"),
+        (style.get("brand_impersonation"), 22, f"brand impersonation: {style.get('impersonated_brand', {}).get('name', 'known asset')}"),
         (isinstance(deployer_balance, (int, float)) and deployer_balance < 25, 6, "low deployer TRX balance"),
         (not meta.get("name") or not meta.get("symbol"), 10, "missing TRC-20 metadata"),
     ]
@@ -963,6 +993,25 @@ def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any]
         if active:
             risk += points
             reasons.append(reason)
+    if backdoor.get("has_backdoor") or backdoor_score >= 40:
+        risk += min(35, max(18, backdoor_score // 2))
+        reasons.append(f"bytecode backdoor risk {backdoor_score}/100")
+    tx_count = entropy.get("tx_count")
+    unique_wallets = entropy.get("unique_wallets")
+    if isinstance(tx_count, int) and isinstance(unique_wallets, int) and 0 < tx_count <= 25 and unique_wallets <= 25:
+        risk += 8
+        reasons.append(f"thin TRON activity: {tx_count} tx / {unique_wallets} wallets")
+    edge_count = wash.get("edge_count")
+    if isinstance(edge_count, int) and edge_count >= 15 and not wash.get("wash_detected"):
+        risk += 6
+        reasons.append(f"thin transfer graph edges: {edge_count}")
+    unavailable = {
+        module_status(cia.get("funding", {})),
+        module_status(cia.get("latency", {})),
+    }
+    if (style.get("brand_impersonation") or backdoor_score >= 40) and unavailable & {"error", "unavailable", "invalid"}:
+        risk += 8
+        reasons.append("missing provenance on elevated-risk token")
     return min(risk, 100), reasons
 
 
