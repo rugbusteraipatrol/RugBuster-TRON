@@ -30,8 +30,13 @@ import requests
 
 try:
     from web3 import Web3
+    try:
+        from web3.middleware import ExtraDataToPOAMiddleware as AVAX_POA_MIDDLEWARE
+    except ImportError:
+        from web3.middleware import geth_poa_middleware as AVAX_POA_MIDDLEWARE
 except ImportError:
     Web3 = None
+    AVAX_POA_MIDDLEWARE = None
 
 
 def load_env(path: Path = Path(".env")) -> None:
@@ -52,6 +57,12 @@ load_env()
 
 def clean_env_value(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip().strip('"').strip("'")
+
+
+def create_avax_web3(timeout: int):
+    web3 = Web3(Web3.HTTPProvider(AVAX_RPC, request_kwargs={"timeout": timeout}))
+    web3.middleware_onion.inject(AVAX_POA_MIDDLEWARE, layer=0)
+    return web3
 
 # ---------------------------------------------------------------------------
 # Config
@@ -789,7 +800,7 @@ def read_erc20_metadata_with_abi(web3, contract_address: str, abi: list[dict]) -
 def get_erc20_metadata_rpc(contract_address: str) -> dict | None:
     if Web3 is None:
         return None
-    web3 = Web3(Web3.HTTPProvider(AVAX_RPC, request_kwargs={"timeout": RPC_TIMEOUT}))
+    web3 = create_avax_web3(RPC_TIMEOUT)
     if not web3.is_connected() or not Web3.is_address(contract_address):
         return None
     for abi in (ERC20_META_ABI, ERC20_BYTES32_META_ABI):
@@ -1688,7 +1699,7 @@ def publish_module_payloads_onchain(payloads: list[dict], state: dict) -> list[d
     if not onchain_logging_ready():
         return []
 
-    web3 = Web3(Web3.HTTPProvider(AVAX_RPC, request_kwargs={"timeout": 30}))
+    web3 = create_avax_web3(30)
     if not web3.is_connected():
         raise RuntimeError("Ne mogu da se povežem na AVAX RPC za on-chain logging")
 
