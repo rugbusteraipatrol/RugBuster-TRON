@@ -82,6 +82,7 @@ def cia_flags(record: dict[str, Any]) -> dict[str, Any]:
 
 def api_record(record: dict[str, Any], source: str) -> dict[str, Any]:
     address = record.get("contract_address") or record.get("address") or ""
+    confidence = record.get("confidence") or {"level": "UNKNOWN"}
     return {
         "ok": True,
         "chain": "tron",
@@ -89,7 +90,8 @@ def api_record(record: dict[str, Any], source: str) -> dict[str, Any]:
         "verdict": record.get("label") or "UNKNOWN",
         "reason": reason_from_record(record),
         "risk_score": record.get("risk_percent"),
-        "confidence": record.get("confidence") or {"level": "UNKNOWN"},
+        "confidence": confidence,
+        "reading_status": confidence.get("reading_status", "unknown"),
         "token_name": record.get("token_name"),
         "token_symbol": record.get("symbol") or record.get("token_symbol"),
         "metadata": {
