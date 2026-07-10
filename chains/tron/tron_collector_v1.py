@@ -60,6 +60,8 @@ POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "60"))
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", "20"))
 RPC_TIMEOUT = int(os.getenv("RPC_TIMEOUT", "20"))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", "0.35"))
+TRONGRID_MAX_RETRIES = int(os.getenv("TRONGRID_MAX_RETRIES", "2"))
+TRONGRID_RETRY_BACKOFF_SECONDS = float(os.getenv("TRONGRID_RETRY_BACKOFF_SECONDS", "0.75"))
 MIN_SCAN_DELAY_MINUTES = int(os.getenv("MIN_SCAN_DELAY_MINUTES", "2"))
 MAX_SCAN_DELAY_MINUTES = int(os.getenv("MAX_SCAN_DELAY_MINUTES", "3"))
 MAX_TOKENS_PER_DAY = int(os.getenv("MAX_TOKENS_PER_DAY", "120"))
@@ -85,6 +87,9 @@ RESCAN_COOLDOWN_SECONDS = int(os.getenv("RESCAN_COOLDOWN_SECONDS", "2700"))
 MAX_PENDING_QUEUE = int(os.getenv("MAX_PENDING_QUEUE", "250"))
 FALLBACK_CONTRACT_SCAN_ENABLED = os.getenv("FALLBACK_CONTRACT_SCAN_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 DEX_EVENT_SCAN_ENABLED = os.getenv("DEX_EVENT_SCAN_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+DEX_EVENT_SCAN_COOLDOWN_SECONDS = int(os.getenv("TRON_DEX_EVENT_SCAN_COOLDOWN_SECONDS", "300"))
+FALLBACK_CONTRACT_SCAN_COOLDOWN_SECONDS = int(os.getenv("TRON_FALLBACK_SCAN_COOLDOWN_SECONDS", "300"))
+MAX_FALLBACK_DISCOVERY_PER_CYCLE = int(os.getenv("TRON_FALLBACK_MAX_CANDIDATES", "5"))
 DEX_FACTORY_ADDRESSES = [
     item.strip()
     for item in clean_env_value("TRON_DEX_FACTORY_ADDRESSES").split(",")
@@ -109,6 +114,7 @@ log = logging.getLogger(__name__)
 
 creator_history = defaultdict(lambda: {"total": 0, "danger": 0, "warn": 0, "good": 0})
 seen_contracts: dict[str, float] = {}
+last_alert_signatures: dict[str, str] = {}
 seen_token_names: list[str] = []
 cross_chain_patterns: dict[str, dict[str, Any]] = {}
 _last_api_call = [0.0]
@@ -270,15 +276,28 @@ def full_node_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def trongrid_get(path: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    throttle()
-    resp = requests.get(
-        f"{TRONGRID_API.rstrip('/')}{path}",
-        params=params or {},
-        headers=headers(),
-        timeout=API_TIMEOUT,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    """GET TronGrid data with bounded 429 retry/backoff."""
+    for attempt in range(TRONGRID_MAX_RETRIES + 1):
+        throttle()
+        resp = requests.get(
+            f"{TRONGRID_API.rstrip('/')}{path}",
+            params=params or {},
+            headers=headers(),
+            timeout=API_TIMEOUT,
+        )
+        if resp.status_code != 429 or attempt >= TRONGRID_MAX_RETRIES:
+            resp.raise_for_status()
+            return resp.json()
+
+        retry_after = resp.headers.get("Retry-After")
+        try:
+            delay = max(float(retry_after), TRONGRID_RETRY_BACKOFF_SECONDS * (2 ** attempt))
+        except (TypeError, ValueError):
+            delay = TRONGRID_RETRY_BACKOFF_SECONDS * (2 ** attempt)
+        log.warning("TronGrid rate limit for %s; retry %d/%d in %.2fs", path, attempt + 1, TRONGRID_MAX_RETRIES, delay)
+        time.sleep(delay)
+
+    raise RuntimeError("TronGrid retry loop ended unexpectedly")
 
 
 def get_latest_block() -> int:
@@ -482,6 +501,8 @@ def get_new_token_deployments(from_block: int, to_block: int) -> list[dict[str, 
                 if item.get("type") != "CreateSmartContract":
                     continue
                 value = item.get("parameter", {}).get("value", {})
+                if not is_trc20_deployment(value):
+                    continue
                 deployer = normalize_tron_address(value.get("owner_address", ""))
                 contract_addr = normalize_tron_address(value.get("contract_address", ""))
                 if not contract_addr:
@@ -499,8 +520,21 @@ def get_new_token_deployments(from_block: int, to_block: int) -> list[dict[str, 
                         "source": "contract_deploy",
                     }
                     log.info("New TRON contract: %s from %s", contract_addr, deployer)
+                    if len(contracts) >= MAX_FALLBACK_DISCOVERY_PER_CYCLE:
+                        return list(contracts.values())
         time.sleep(0.05)
     return list(contracts.values())
+
+
+def is_trc20_deployment(value: dict[str, Any]) -> bool:
+    """Keep the fallback queue focused on contracts that declare the TRC-20 core ABI."""
+    entries = value.get("new_contract", {}).get("abi", {}).get("entrys", [])
+    names = {
+        str(entry.get("name") or "")
+        for entry in entries
+        if entry.get("type") == "Function"
+    }
+    return {"name", "symbol", "decimals", "totalSupply"}.issubset(names)
 
 
 def token_id_to_address(token_id: str) -> str:
@@ -759,7 +793,11 @@ def detect_funding_origin(deployer: str, deploy_ts: int) -> dict[str, Any]:
     }
 
 
-def detect_deployment_latency(token: str, deploy_ts: int) -> dict[str, Any]:
+def detect_deployment_latency(
+    token: str,
+    deploy_ts: int,
+    transfer_result: Optional[tuple[list[dict[str, Any]], str, str]] = None,
+) -> dict[str, Any]:
     if not deploy_ts:
         return {
             "status": "unavailable",
@@ -768,7 +806,7 @@ def detect_deployment_latency(token: str, deploy_ts: int) -> dict[str, Any]:
             "latency_ms": None,
             "is_sniped": False,
         }
-    transfers, status, error = get_token_transfers_checked(token, limit=50)
+    transfers, status, error = transfer_result or get_token_transfers_checked(token, limit=200)
     if status != "ok":
         return {
             "status": "error",
@@ -802,8 +840,11 @@ def detect_deployment_latency(token: str, deploy_ts: int) -> dict[str, Any]:
     return {"status": "ok", "error": "", "first_transfer_ts": first_ts, "latency_ms": latency_ms, "is_sniped": latency_ms <= 30_000}
 
 
-def detect_tx_entropy(token: str) -> dict[str, Any]:
-    transfers, status, error = get_token_transfers_checked(token, limit=200)
+def detect_tx_entropy(
+    token: str,
+    transfer_result: Optional[tuple[list[dict[str, Any]], str, str]] = None,
+) -> dict[str, Any]:
+    transfers, status, error = transfer_result or get_token_transfers_checked(token, limit=200)
     if status != "ok":
         return {
             "status": "error",
@@ -841,8 +882,11 @@ def detect_tx_entropy(token: str) -> dict[str, Any]:
     }
 
 
-def detect_wash_pattern(token: str) -> dict[str, Any]:
-    transfers, status, error = get_token_transfers_checked(token, limit=200)
+def detect_wash_pattern(
+    token: str,
+    transfer_result: Optional[tuple[list[dict[str, Any]], str, str]] = None,
+) -> dict[str, Any]:
+    transfers, status, error = transfer_result or get_token_transfers_checked(token, limit=200)
     if status != "ok":
         return {
             "status": "error",
@@ -864,8 +908,11 @@ def detect_wash_pattern(token: str) -> dict[str, Any]:
     return {"status": "ok", "error": "", "wash_detected": reciprocal >= 4, "reciprocal_edges": reciprocal, "edge_count": len(edges)}
 
 
-def detect_holder_cluster_age(token: str) -> dict[str, Any]:
-    transfers, status, error = get_token_transfers_checked(token, limit=200)
+def detect_holder_cluster_age(
+    token: str,
+    transfer_result: Optional[tuple[list[dict[str, Any]], str, str]] = None,
+) -> dict[str, Any]:
+    transfers, status, error = transfer_result or get_token_transfers_checked(token, limit=200)
     if status != "ok":
         return {
             "status": "error",
@@ -1024,12 +1071,13 @@ def risk_status_from_percent(risk: int) -> str:
 
 
 def run_cia_analysis(token: str, deployer: str, deploy_ts: int) -> dict[str, Any]:
+    transfer_result = get_token_transfers_checked(token, limit=200)
     return {
         "funding": detect_funding_origin(deployer, deploy_ts),
-        "latency": detect_deployment_latency(token, deploy_ts),
-        "entropy": detect_tx_entropy(token),
-        "wash": detect_wash_pattern(token),
-        "cluster": detect_holder_cluster_age(token),
+        "latency": detect_deployment_latency(token, deploy_ts, transfer_result),
+        "entropy": detect_tx_entropy(token, transfer_result),
+        "wash": detect_wash_pattern(token, transfer_result),
+        "cluster": detect_holder_cluster_age(token, transfer_result),
     }
 
 
@@ -1061,6 +1109,7 @@ def confidence_from_modules(cia: dict[str, Any], v6: dict[str, Any]) -> dict[str
     ]
     return {
         "level": "LOW" if len(missing) >= 3 else "NORMAL",
+        "reading_status": "degraded" if len(missing) >= 3 else "complete",
         "missing_module_count": len(missing),
         "missing_modules": missing,
     }
@@ -1091,15 +1140,60 @@ def append_markdown_scan_log(record: dict[str, Any]) -> None:
         fh.write(line)
 
 
-def send_telegram_alert(record: dict[str, Any]) -> None:
+def alert_signature(record: dict[str, Any]) -> str:
+    return json.dumps({
+        "label": record.get("base_label") or record.get("label"),
+        "risk": record.get("base_risk_percent", record.get("risk_percent")),
+        "reasons": record.get("risk_signal_reasons") or [
+            reason
+            for reason in record.get("risk_reasons", [])
+            if not str(reason).startswith("degraded reading:")
+        ],
+    }, sort_keys=True)
+
+
+def previous_record(address: str) -> Optional[dict[str, Any]]:
+    conn = _db_connect()
+    if conn is None:
+        return None
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT full_record FROM {DB_TABLE} WHERE contract_address = %s", (address,))
+                row = cur.fetchone()
+        return row[0] if row and isinstance(row[0], dict) else None
+    except Exception as exc:
+        log.debug("Previous TRON scan lookup failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+
+
+def should_send_telegram_alert(record: dict[str, Any], previous: Optional[dict[str, Any]]) -> bool:
+    address = record["contract_address"]
+    signature = alert_signature(record)
+    prior_signature = alert_signature(previous) if previous else last_alert_signatures.get(address)
+    last_alert_signatures[address] = signature
+    if prior_signature == signature:
+        log.info("Suppressing TRON alert for %s: confidence/data availability changed without a risk change.", address)
+        return False
+    return True
+
+
+def send_telegram_alert(record: dict[str, Any], previous: Optional[dict[str, Any]] = None) -> None:
     if not TELEGRAM_BOT_TOKEN:
         return
+    if not should_send_telegram_alert(record, previous):
+        return
     flags = ", ".join(record.get("risk_reasons", [])[:5]) or "No major flags"
+    confidence = record.get("confidence", {})
+    reading = "degraded reading, insufficient data" if confidence.get("reading_status") == "degraded" else "complete"
     text = (
         f"RugBuster TRON Scan\n"
         f"{record['label']} | Risk {record['risk_percent']}%\n"
         f"{record.get('token_name')} ({record.get('symbol')})\n"
         f"Token: {record['contract_address']}\n"
+        f"Reading: {reading}\n"
         f"Flags: {flags}\n"
         f"Tronscan: {TRONSCAN_ACCOUNT_URL.format(address=record['contract_address'])}"
     )
@@ -1187,12 +1281,10 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
     v6 = run_v6_analysis(address)
     risk_percent, risk_reasons = calculate_risk(meta, cia, v5, v6, deployer_balance)
     label = risk_status_from_percent(risk_percent)
+    risk_signal_reasons = list(risk_reasons)
     confidence = confidence_from_modules(cia, v6)
     if confidence["level"] == "LOW":
-        risk_reasons.append("low confidence: insufficient TRON data")
-        if label == "GOOD":
-            label = "WARN"
-        risk_percent = max(risk_percent, 40)
+        risk_reasons.append("degraded reading: insufficient TRON data")
 
     record = {
         "chain": "TRON",
@@ -1212,6 +1304,9 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
         "pair": token_data.get("pair", ""),
         "label": label,
         "risk_percent": risk_percent,
+        "base_label": label,
+        "base_risk_percent": risk_percent,
+        "risk_signal_reasons": risk_signal_reasons,
         "risk_reasons": risk_reasons,
         "creator_stats": creator_stats,
         "confidence": confidence,
@@ -1220,10 +1315,11 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
         "v6": v6,
         "scan_timestamp": int(time.time()),
     }
+    previous = previous_record(address)
     append_jsonl(output_path, record)
     save_to_postgres(record)
     append_markdown_scan_log(record)
-    send_telegram_alert(record)
+    send_telegram_alert(record, previous)
     publish_recent_scan(record)
     update_creator_history(deployer, label)
     seen_contracts[address] = time.time()

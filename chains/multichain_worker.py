@@ -72,6 +72,8 @@ class ChainRuntime:
     next_scan_at: float = 0.0
     last_new_pool_refill_at: float = 0.0
     last_top_pool_refill_at: float = 0.0
+    last_dex_refill_at: float = 0.0
+    last_fallback_refill_at: float = 0.0
     seeded: bool = False
 
     def label(self) -> str:
@@ -149,6 +151,7 @@ class ChainRuntime:
     def refill_from_chain(self) -> None:
         if len(self.pending) >= REFILL_LOW_WATERMARK:
             return
+        now = time.time()
         try:
             new_block = int(self.module.get_latest_block() or 0)
         except Exception as exc:
@@ -158,7 +161,9 @@ class ChainRuntime:
             self.current_block = max(self.current_block, new_block)
             return
 
-        if DEX_SCAN_ENABLED and hasattr(self.module, "get_new_dex_pair_tokens"):
+        dex_enabled = DEX_SCAN_ENABLED or (self.config.name == "tron" and env_bool("TRON_DEX_EVENT_SCAN_ENABLED", "true"))
+        dex_cooldown = int(getattr(self.module, "DEX_EVENT_SCAN_COOLDOWN_SECONDS", 300))
+        if dex_enabled and now - self.last_dex_refill_at >= dex_cooldown and hasattr(self.module, "get_new_dex_pair_tokens"):
             try:
                 dex_fn = self.module.get_new_dex_pair_tokens
                 if len(inspect.signature(dex_fn).parameters) == 0:
@@ -167,15 +172,19 @@ class ChainRuntime:
                     tokens = dex_fn(self.current_block, new_block)
                 for token in tokens:
                     self.enqueue(token)
+                self.last_dex_refill_at = now
                 log.info("%s dex queued=%d found=%d", self.label(), len(self.pending), len(tokens))
             except Exception as exc:
                 log.warning("%s dex scan failed: %s", self.label(), exc)
 
-        if FALLBACK_SCAN_ENABLED and hasattr(self.module, "get_new_token_deployments") and len(self.pending) < REFILL_LOW_WATERMARK:
+        fallback_enabled = FALLBACK_SCAN_ENABLED or (self.config.name == "tron" and env_bool("TRON_FALLBACK_SCAN_ENABLED", "true"))
+        fallback_cooldown = int(getattr(self.module, "FALLBACK_CONTRACT_SCAN_COOLDOWN_SECONDS", 300))
+        if fallback_enabled and now - self.last_fallback_refill_at >= fallback_cooldown and hasattr(self.module, "get_new_token_deployments") and len(self.pending) < REFILL_LOW_WATERMARK:
             try:
                 tokens = self.module.get_new_token_deployments(self.current_block, new_block)
                 for token in tokens:
                     self.enqueue(token)
+                self.last_fallback_refill_at = now
                 log.info("%s fallback queued=%d found=%d blocks=%d-%d", self.label(), len(self.pending), len(tokens), self.current_block, new_block)
             except Exception as exc:
                 log.warning("%s fallback scan failed: %s", self.label(), exc)
@@ -298,6 +307,11 @@ def build_runtimes() -> list[ChainRuntime]:
                 f"https://api.geckoterminal.com/api/v2/networks/{config.gecko_network}/new_pools"
                 "?include=base_token,quote_token"
             )
+        if config.name == "tron":
+            module.GECKOTERMINAL_TOP_POOLS_ENABLED = env_bool("TRON_TOP_POOLS_ENABLED", "true")
+            module.GECKOTERMINAL_POOL_PAGES = min(int(getattr(module, "GECKOTERMINAL_POOL_PAGES", 3)), 2)
+            module.DEX_EVENT_SCAN_ENABLED = env_bool("TRON_DEX_EVENT_SCAN_ENABLED", "true")
+            module.FALLBACK_CONTRACT_SCAN_ENABLED = env_bool("TRON_FALLBACK_SCAN_ENABLED", "true")
         process = getattr(module, config.process_func)
         runtime = ChainRuntime(config=config, module=module, process=process, output_path=Path(config.output_file))
         runtime.init()
