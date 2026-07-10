@@ -64,7 +64,7 @@ CHAIN_CONFIG = {
     "solana": {
         "dex": "solana",
         "goplus_chain": None,
-        "rugbuster_url": "",
+        "rugbuster_url": "https://rugbuster-solana-api-production.up.railway.app/score?address={address}",
         "control_searches": ["SOL", "USDC", "JUP", "BONK", "RAY"],
         "discovery_searches": ["pepe", "inu", "moon", "ai", "doge"],
         "controls": [
@@ -95,6 +95,17 @@ MINOR_GOPLUS_FLAGS = {
     "trading_cooldown",
 }
 
+# These are expected bridge capabilities for the canonical Base DAI representation.
+# Keep them visible in the report, but do not compare them as generic token-admin danger.
+CANONICAL_BRIDGE_CONTEXT = {
+    "base": {
+        "0x50c5725949a6f0c72e6c4a641f24049a917db0cb": {
+            "is_mintable",
+            "owner_change_balance",
+        },
+    },
+}
+
 
 @dataclass
 class Candidate:
@@ -115,7 +126,9 @@ class SourceResult:
     error: str | None = None
     raw: Any = None
     flags: list[str] = field(default_factory=list)
+    context_required: list[str] = field(default_factory=list)
     label: str | None = None
+    market_warning: str | None = None
 
 
 class HttpClient:
@@ -272,15 +285,24 @@ def discover_dex_candidates(client: HttpClient, chain: str) -> list[Candidate]:
     return list(discovered.values())
 
 
-def collect_buckets(client: HttpClient, chain: str, controls: int, fresh: int, bad: int, seed: int) -> list[Candidate]:
+def collect_buckets(
+    client: HttpClient,
+    chain: str,
+    controls: int,
+    fresh: int,
+    bad: int,
+    seed: int,
+    fresh_days: int,
+    bad_loss_threshold: float,
+) -> list[Candidate]:
     selected = collect_controls(client, chain, controls)
     existing = {item.address.lower() for item in selected}
     now_ms = int(time.time() * 1000)
-    recent_ms = now_ms - 7 * 24 * 60 * 60 * 1000
+    recent_ms = now_ms - fresh_days * 24 * 60 * 60 * 1000
     market = [item for item in discover_dex_candidates(client, chain) if item.address.lower() not in existing]
 
     fresh_pool = [item for item in market if item.pair_created_at and item.pair_created_at >= recent_ms]
-    bad_pool = [item for item in market if (item.price_change_h24 or 0) <= -90]
+    bad_pool = [item for item in market if (item.price_change_h24 or 0) <= bad_loss_threshold]
     random.Random(seed).shuffle(fresh_pool)
     random.Random(seed + 1).shuffle(bad_pool)
 
@@ -304,18 +326,30 @@ def normalize_rugbuster(payload: Any) -> SourceResult:
         return SourceResult(error="RugBuster returned no usable cached/read-only score", raw=payload)
     label = str(payload.get("label") or payload.get("verdict") or "").upper()
     mapping = {"GOOD": "SAFE", "SAFE": "SAFE", "WARN": "CAUTION", "ELEVATED": "CAUTION", "DANGER": "DANGER"}
-    verdict = mapping.get(label)
+    score = as_float(payload.get("rug_score") if payload.get("rug_score") is not None else payload.get("risk_score"))
+    verdict = None
+    if score is not None:
+        verdict = "DANGER" if score >= 75 else "CAUTION" if score >= 45 else "SAFE"
+        label = f"RISK_{score:g}"
     if verdict is None:
-        score = as_float(payload.get("rug_score") if payload.get("rug_score") is not None else payload.get("risk_score"))
-        if score is not None:
-            verdict = "DANGER" if score >= 75 else "CAUTION" if score >= 45 else "SAFE"
-            label = f"RISK_{score:g}"
+        verdict = mapping.get(label)
     if verdict is None:
         return SourceResult(error=f"unrecognized RugBuster label: {label or 'empty'}", raw=payload, label=label)
-    return SourceResult(normalized=verdict, raw=payload, label=label, flags=[str(item) for item in payload.get("risk_flags", []) if item])
+    speculation_status = str(payload.get("speculation_status") or "").upper()
+    speculation_score = as_float(payload.get("speculation_score"))
+    market_warning = None
+    if speculation_status and speculation_status not in {"LOW", "SAFE"}:
+        market_warning = f"{speculation_status}{f' ({speculation_score:g})' if speculation_score is not None else ''}"
+    return SourceResult(
+        normalized=verdict,
+        raw=payload,
+        label=label,
+        flags=[str(item) for item in payload.get("risk_flags", []) if item],
+        market_warning=market_warning,
+    )
 
 
-def normalize_goplus(payload: Any, address: str) -> SourceResult:
+def normalize_goplus(payload: Any, chain: str, address: str) -> SourceResult:
     if not isinstance(payload, dict) or str(payload.get("code")) not in {"1", "2"}:
         return SourceResult(error=f"GoPlus API result code: {payload.get('code') if isinstance(payload, dict) else 'invalid'}", raw=payload)
     result = payload.get("result") or {}
@@ -324,6 +358,10 @@ def normalize_goplus(payload: Any, address: str) -> SourceResult:
         return SourceResult(error="GoPlus returned no token data", raw=payload)
     serious = [key for key in SERIOUS_GOPLUS_FLAGS if as_bool(data.get(key))]
     minor = [key for key in MINOR_GOPLUS_FLAGS - {"is_open_source"} if as_bool(data.get(key))]
+    expected_context = CANONICAL_BRIDGE_CONTEXT.get(chain, {}).get(address.lower(), set())
+    context_required = [key for key in expected_context if key in serious or key in minor]
+    serious = [key for key in serious if key not in expected_context]
+    minor = [key for key in minor if key not in expected_context]
     sell_tax = as_float(data.get("sell_tax")) or 0
     buy_tax = as_float(data.get("buy_tax")) or 0
     if sell_tax >= 0.5 or buy_tax >= 0.5:
@@ -334,7 +372,12 @@ def normalize_goplus(payload: Any, address: str) -> SourceResult:
     if str(data.get("is_open_source", "1")) == "0":
         minor.append("unverified_source")
     verdict = "DANGER" if serious else "CAUTION" if minor else "SAFE"
-    return SourceResult(normalized=verdict, raw=payload, flags=sorted(set(serious + minor)))
+    return SourceResult(
+        normalized=verdict,
+        raw=payload,
+        flags=sorted(set(serious + minor)),
+        context_required=sorted(context_required),
+    )
 
 
 def normalize_rugcheck(payload: Any) -> SourceResult:
@@ -415,7 +458,7 @@ def fetch_goplus(client: HttpClient, candidate: Candidate) -> SourceResult:
         headers["Authorization"] = f"Bearer {token}"
     try:
         payload = client.get_json(GOPLUS.format(chain_id=chain_id), params={"contract_addresses": candidate.address}, headers=headers)
-        return normalize_goplus(payload, candidate.address)
+        return normalize_goplus(payload, candidate.chain, candidate.address)
     except Exception as exc:
         return SourceResult(error=f"{type(exc).__name__}: {exc}")
 
@@ -443,6 +486,7 @@ def write_report(path: Path, rows: list[dict[str, Any]], run_meta: dict[str, Any
         "",
         f"Generated: `{run_meta['generated_at']}`  ",
         "Mode: read-only HTTP GET only. No RugBuster scan endpoint or production database write was called.",
+        "Phase 2 change: numeric RugBuster rug score is the security verdict; speculation is shown separately as a market warning. Canonical bridge mint/owner fields are retained as CONTEXT_REQUIRED, not generic token-admin danger.",
         "",
         "## Critical Disagreements",
         "",
@@ -458,19 +502,19 @@ def write_report(path: Path, rows: list[dict[str, Any]], run_meta: dict[str, Any
         "",
         "## Mapping",
         "",
-        "- RugBuster: GOOD/SAFE -> SAFE; WARN/ELEVATED -> CAUTION; DANGER -> DANGER.",
+        "- RugBuster: use rug_score/risk_score where present: <45 -> SAFE, 45-74 -> CAUTION, >=75 -> DANGER. The public label is only a fallback; speculation_score is a separate market signal.",
         "- GoPlus: honeypot, blacklist, hidden owner, cannot sell, balance-changing owner, transfer pause, or >=50% tax -> DANGER; unverified source/proxy/mintability/modifiable tax/cooldown or >=10% tax -> CAUTION; otherwise SAFE.",
         "- RugCheck (operational band, documented for this benchmark): score <100 -> SAFE; 100-4,999 -> CAUTION; >=5,000 or a serious risk item -> DANGER.",
         "- FETCH_FAILED means no verdict was inferred and the row is excluded from agreement statistics.",
         "",
         "## Results",
         "",
-        "| Address | Chain | Bucket | RugBuster | GoPlus | RugCheck | Agree? |",
-        "|---|---|---|---|---|---|---|",
+        "| Address | Chain | Bucket | RugBuster security | Market warning | GoPlus | GoPlus context | RugCheck | Agree? |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         lines.append(
-            f"| `{row['address']}` | {row['chain']} | {row['bucket']} | {row['rugbuster']} | {row['goplus']} | {row['rugcheck']} | {row['agreement']} |"
+            f"| `{row['address']}` | {row['chain']} | {row['bucket']} | {row['rugbuster']} | {markdown_escape(row['rugbuster_market'] or '')} | {row['goplus']} | {markdown_escape(', '.join(row['goplus_context']))} | {row['rugcheck']} | {row['agreement']} |"
         )
 
     lines += ["", "## Summary", ""]
@@ -482,6 +526,7 @@ def write_report(path: Path, rows: list[dict[str, Any]], run_meta: dict[str, Any
         bucket_counts = Counter(row["bucket"] for row in chain_rows)
         lines.append(f"- Collected: {len(chain_rows)}; evaluated: {len(evaluable)}; fetch failures/not-applicable: {len(chain_rows) - len(evaluable)}.")
         lines.append(f"- Bucket coverage: controls={bucket_counts['control']}, fresh={bucket_counts['fresh_unknown']}, likely_bad={bucket_counts['likely_bad']}.")
+        lines.append(f"- Discovery filters: fresh <{run_meta['args']['fresh_days']} days; likely-bad 24h price change <= {run_meta['args']['bad_loss_threshold']}%.")
         lines.append(f"- Agreement: {agreements}/{len(evaluable)} ({(agreements / len(evaluable) * 100) if evaluable else 0:.1f}%).")
         for bucket in ("control", "fresh_unknown", "likely_bad"):
             bucket_rows = [row for row in evaluable if row["bucket"] == bucket]
@@ -504,6 +549,22 @@ def write_report(path: Path, rows: list[dict[str, Any]], run_meta: dict[str, Any
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def load_reused_candidates(path: Path, chains: set[str]) -> dict[str, list[Candidate]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    grouped: dict[str, list[Candidate]] = defaultdict(list)
+    seen: set[tuple[str, str]] = set()
+    for row in payload.get("rows", []):
+        candidate_data = row.get("candidate") or {}
+        chain = str(candidate_data.get("chain") or "")
+        address = str(candidate_data.get("address") or "")
+        key = (chain, address.lower())
+        if chain not in chains or not address or key in seen:
+            continue
+        seen.add(key)
+        grouped[chain].append(Candidate(**candidate_data))
+    return grouped
+
+
 def run(args: argparse.Namespace) -> int:
     chains = [item.strip() for item in args.chains.split(",") if item.strip()]
     unknown = set(chains) - set(CHAIN_CONFIG)
@@ -512,9 +573,20 @@ def run(args: argparse.Namespace) -> int:
     client = HttpClient(args.request_delay, args.timeout)
     all_rows: list[dict[str, Any]] = []
     raw_rows: list[dict[str, Any]] = []
+    reuse_chains = {item.strip() for item in args.reuse_chains.split(",") if item.strip()}
+    reused = load_reused_candidates(Path(args.reuse_candidates_file), reuse_chains) if args.reuse_candidates_file else {}
 
     for index, chain in enumerate(chains):
-        tokens = collect_buckets(client, chain, args.controls, args.fresh, args.bad, args.seed + index)
+        tokens = reused.get(chain) or collect_buckets(
+            client,
+            chain,
+            args.controls,
+            args.fresh,
+            args.bad,
+            args.seed + index,
+            args.fresh_days,
+            args.bad_loss_threshold,
+        )
         print(f"{chain}: collected {len(tokens)} tokens", file=sys.stderr)
         for candidate in tokens:
             rugbuster = fetch_rugbuster(client, candidate)
@@ -531,6 +603,8 @@ def run(args: argparse.Namespace) -> int:
                 "rugbuster": rugbuster.normalized,
                 "goplus": goplus.normalized,
                 "rugcheck": rugcheck.normalized,
+                "rugbuster_market": rugbuster.market_warning,
+                "goplus_context": goplus.context_required,
                 "agreement": agreement,
                 "critical": critical,
                 "reverse": reverse,
@@ -562,6 +636,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--controls", type=int, default=15)
     parser.add_argument("--fresh", type=int, default=20)
     parser.add_argument("--bad", type=int, default=15)
+    parser.add_argument("--fresh-days", type=int, default=7)
+    parser.add_argument("--bad-loss-threshold", type=float, default=-90.0)
+    parser.add_argument("--reuse-candidates-file", help="Raw benchmark JSON whose candidates should be reused")
+    parser.add_argument("--reuse-chains", default="", help="Comma-separated chains to reuse from --reuse-candidates-file")
     parser.add_argument("--request-delay", type=float, default=0.35, help="Minimum delay between all external GET requests")
     parser.add_argument("--timeout", type=int, default=20)
     parser.add_argument("--seed", type=int, default=9000)
