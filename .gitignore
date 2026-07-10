@@ -1,5 +1,7 @@
 .env
 node_modules/
+benchmarks/reports/agreement_raw_*.json
+benchmarks/reports/smoke*/
 build/
 artifacts/
 cache/
