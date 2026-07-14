@@ -23,6 +23,22 @@ class FakeResponse:
 
 
 class TronCollectorFixTests(unittest.TestCase):
+    def test_remote_scoring_response_is_used_when_feature_flag_is_enabled(self):
+        cia = {"funding": {"status": "ok"}, "latency": {"status": "ok"}, "entropy": {"status": "ok"}, "wash": {"status": "ok"}, "cluster": {"status": "ok"}}
+        remote = FakeResponse(200, {"risk_score": 77, "verdict": "DANGER", "confidence": {"level": "NORMAL"}, "risk_factors": [{"detail": "remote factor"}]})
+        with patch.object(tron, "USE_REMOTE_SCORING_ENGINE", True), patch.object(tron, "SCORING_ENGINE_URL", "http://scoring.test"), patch.object(tron, "SCORING_ENGINE_HMAC_SECRET", "test-secret"), patch.object(tron, "calculate_risk", return_value=(23, ["local factor"])), patch.object(tron.requests, "post", return_value=remote) as post:
+            risk, reasons, confidence, used_remote = tron.score_with_optional_remote_engine({"name": "T", "symbol": "T"}, cia, {}, {"backdoor": {"status": "ok"}}, 10)
+        self.assertEqual((risk, reasons, confidence, used_remote), (77, ["remote factor"], {"level": "NORMAL"}, True))
+        self.assertEqual(post.call_args.kwargs["headers"]["Content-Type"], "application/json")
+        self.assertIn("X-RugBuster-Signature", post.call_args.kwargs["headers"])
+
+    def test_remote_scoring_failure_falls_back_to_local_result(self):
+        cia = {"funding": {"status": "ok"}, "latency": {"status": "ok"}, "entropy": {"status": "ok"}, "wash": {"status": "ok"}, "cluster": {"status": "ok"}}
+        with patch.object(tron, "USE_REMOTE_SCORING_ENGINE", True), patch.object(tron, "SCORING_ENGINE_URL", "http://scoring.test"), patch.object(tron, "SCORING_ENGINE_HMAC_SECRET", "test-secret"), patch.object(tron, "calculate_risk", return_value=(23, ["local factor"])), patch.object(tron.requests, "post", side_effect=tron.requests.Timeout):
+            risk, reasons, confidence, used_remote = tron.score_with_optional_remote_engine({"name": "T", "symbol": "T"}, cia, {}, {"backdoor": {"status": "ok"}}, 10)
+        self.assertEqual((risk, reasons, used_remote), (23, ["local factor"], False))
+        self.assertEqual(confidence["level"], "NORMAL")
+
     def test_trongrid_retries_429_with_backoff(self):
         responses = [FakeResponse(429), FakeResponse(429), FakeResponse(200, {"data": []})]
         with patch.object(tron, "throttle"), patch.object(tron.requests, "get", side_effect=responses) as get, patch.object(tron.time, "sleep") as sleep:
@@ -39,7 +55,7 @@ class TronCollectorFixTests(unittest.TestCase):
         self.assertEqual(cia["wash"]["status"], "ok")
         self.assertEqual(cia["cluster"]["status"], "ok")
 
-    def test_low_confidence_preserves_confirmed_good_verdict(self):
+    def test_low_confidence_is_not_presented_as_a_good_verdict(self):
         cia = {
             "funding": {"status": "unavailable", "error": "missing_deployer"},
             "latency": {"status": "unavailable", "error": "missing_deployment_timestamp"},
@@ -49,7 +65,8 @@ class TronCollectorFixTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temp_dir, patch.object(tron, "get_trc20_metadata", return_value={"name": "BLUC", "symbol": "BLUC", "decimals": 6, "total_supply": 1}), patch.object(tron, "get_creator_stats", return_value={"rug_rate": 0}), patch.object(tron, "run_cia_analysis", return_value=cia), patch.object(tron, "run_v5_analysis", return_value={}), patch.object(tron, "run_v6_analysis", return_value={"backdoor": {"status": "ok"}}), patch.object(tron, "calculate_risk", return_value=(23, ["thin TRON activity: 1 tx / 2 wallets"])), patch.object(tron, "previous_record", return_value=None), patch.object(tron, "save_to_postgres"), patch.object(tron, "append_markdown_scan_log"), patch.object(tron, "publish_recent_scan"), patch.object(tron, "update_creator_history"):
             record = tron.process_token({"address": "TNssvWyu48fuCRQkqfs9T4qX5T9PkBAxNN", "source": "test"}, Path(temp_dir) / "out.jsonl")
-        self.assertEqual(record["label"], "GOOD")
+        self.assertEqual(record["label"], "WARN")
+        self.assertEqual(record["base_label"], "GOOD")
         self.assertEqual(record["risk_percent"], 23)
         self.assertEqual(record["confidence"]["reading_status"], "degraded")
         self.assertIn("degraded reading: insufficient TRON data", record["risk_reasons"])
