@@ -1,0 +1,10 @@
+Copyright (c) 2026 RugBusterAI Patrol.
+
+All Rights Reserved.
+
+No permission is granted to copy, modify, distribute, sublicense, or use the collector,
+API, scoring engine, configuration, datasets, or other non-contract material in this
+repository without prior written permission from RugBusterAI Patrol.
+
+Exception: Solidity smart contracts under `contracts/` carry their own SPDX `MIT` notice
+and are licensed under MIT. On-chain deployed code is publicly verifiable by design.
