@@ -1110,6 +1110,7 @@ def score_with_optional_remote_engine(
         hashlib.sha256,
     ).hexdigest()
     try:
+        request_started = time.monotonic()
         response = requests.post(
             f"{SCORING_ENGINE_URL}/v1/score",
             data=body,
@@ -1121,6 +1122,7 @@ def score_with_optional_remote_engine(
             timeout=SCORING_ENGINE_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
+        latency_ms = round((time.monotonic() - request_started) * 1000)
         result = response.json()
         risk = int(result["risk_score"])
         confidence = result["confidence"]
@@ -1132,6 +1134,7 @@ def score_with_optional_remote_engine(
         expected_remote_verdict = "WARN" if confidence.get("level") == "LOW" and expected == "GOOD" else expected
         if remote_verdict != expected_remote_verdict:
             raise ValueError("remote scoring response failed consistency validation")
+        log.info("Remote TRON scoring succeeded in %dms.", latency_ms)
         return risk, reasons, confidence, True
     except (requests.RequestException, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
         log.warning("Remote TRON scoring failed (%s); using local scorer.", type(exc).__name__)
