@@ -12,6 +12,7 @@ Run:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -66,6 +67,10 @@ MIN_SCAN_DELAY_MINUTES = int(os.getenv("MIN_SCAN_DELAY_MINUTES", "2"))
 MAX_SCAN_DELAY_MINUTES = int(os.getenv("MAX_SCAN_DELAY_MINUTES", "3"))
 MAX_TOKENS_PER_DAY = int(os.getenv("MAX_TOKENS_PER_DAY", "120"))
 RUN_UNTIL_DATE = os.getenv("RUN_UNTIL_DATE", "2099-12-31")
+USE_REMOTE_SCORING_ENGINE = os.getenv("USE_REMOTE_SCORING_ENGINE", "false").strip().lower() in {"1", "true", "yes", "on"}
+SCORING_ENGINE_URL = clean_env_value("SCORING_ENGINE_URL").rstrip("/")
+SCORING_ENGINE_HMAC_SECRET = clean_env_value("SCORING_ENGINE_HMAC_SECRET")
+SCORING_ENGINE_TIMEOUT_SECONDS = float(os.getenv("SCORING_ENGINE_TIMEOUT_SECONDS", "5"))
 REQUIRE_TRC20_METADATA = os.getenv("REQUIRE_TRC20_METADATA", "true").strip().lower() in {"1", "true", "yes", "on"}
 TRON_SCAN_LOG = Path(clean_env_value("TRON_SCAN_LOG", "tron_scan_log.md"))
 TRON_STATE_FILE = Path(clean_env_value("TRON_STATE_FILE", "tron_collector_state.json"))
@@ -1041,7 +1046,9 @@ def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any]
             risk += points
             reasons.append(reason)
     if backdoor.get("has_backdoor") or backdoor_score >= 40:
-        risk += min(35, max(18, backdoor_score // 2))
+        # A detected privileged bytecode signature must not be classified low-risk
+        # just because it is the only signature found.
+        risk += min(35, max(25, backdoor_score // 2))
         reasons.append(f"bytecode backdoor risk {backdoor_score}/100")
     tx_count = entropy.get("tx_count")
     unique_wallets = entropy.get("unique_wallets")
@@ -1068,6 +1075,67 @@ def risk_status_from_percent(risk: int) -> str:
     if risk >= 40:
         return "WARN"
     return "GOOD"
+
+
+def score_with_optional_remote_engine(
+    meta: dict[str, Any],
+    cia: dict[str, Any],
+    v5: dict[str, Any],
+    v6: dict[str, Any],
+    deployer_balance: Optional[float],
+) -> tuple[int, list[str], dict[str, Any], bool]:
+    """Use private calibration when enabled; retain the local scorer as an instant fallback."""
+    local_risk, local_reasons = calculate_risk(meta, cia, v5, v6, deployer_balance)
+    local_confidence = confidence_from_modules(cia, v6)
+    if not USE_REMOTE_SCORING_ENGINE:
+        return local_risk, local_reasons, local_confidence, False
+    if not SCORING_ENGINE_URL or not SCORING_ENGINE_HMAC_SECRET:
+        log.warning("Remote scoring is enabled but not configured; using local TRON scoring.")
+        return local_risk, local_reasons, local_confidence, False
+
+    payload = {
+        "schema_version": "1",
+        "chain": "TRON",
+        "token": meta,
+        "cia": cia,
+        "v5": v5,
+        "v6": v6,
+        "deployer_balance": deployer_balance,
+    }
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    timestamp = str(int(time.time()))
+    signature = hmac.new(
+        SCORING_ENGINE_HMAC_SECRET.encode("utf-8"),
+        timestamp.encode("utf-8") + b"." + body,
+        hashlib.sha256,
+    ).hexdigest()
+    try:
+        response = requests.post(
+            f"{SCORING_ENGINE_URL}/v1/score",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-RugBuster-Timestamp": timestamp,
+                "X-RugBuster-Signature": signature,
+            },
+            timeout=SCORING_ENGINE_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        result = response.json()
+        risk = int(result["risk_score"])
+        confidence = result["confidence"]
+        reasons = [str(item["detail"]) for item in result.get("risk_factors", []) if item.get("detail")]
+        if not isinstance(confidence, dict):
+            raise ValueError("remote scoring response did not include confidence")
+        expected = risk_status_from_percent(risk)
+        remote_verdict = str(result.get("verdict") or "").upper()
+        expected_remote_verdict = "WARN" if confidence.get("level") == "LOW" and expected == "GOOD" else expected
+        if remote_verdict != expected_remote_verdict:
+            raise ValueError("remote scoring response failed consistency validation")
+        return risk, reasons, confidence, True
+    except (requests.RequestException, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        log.warning("Remote TRON scoring failed (%s); using local scorer.", type(exc).__name__)
+        return local_risk, local_reasons, local_confidence, False
 
 
 def run_cia_analysis(token: str, deployer: str, deploy_ts: int) -> dict[str, Any]:
@@ -1187,10 +1255,12 @@ def send_telegram_alert(record: dict[str, Any], previous: Optional[dict[str, Any
         return
     flags = ", ".join(record.get("risk_reasons", [])[:5]) or "No major flags"
     confidence = record.get("confidence", {})
-    reading = "degraded reading, insufficient data" if confidence.get("reading_status") == "degraded" else "complete"
+    low_confidence = confidence.get("level") == "LOW"
+    reading = "degraded reading, insufficient data" if low_confidence else "complete"
+    confidence_suffix = " | LOW CONFIDENCE" if low_confidence else ""
     text = (
         f"RugBuster TRON Scan\n"
-        f"{record['label']} | Risk {record['risk_percent']}%\n"
+        f"{record['label']} | Risk {record['risk_percent']}%{confidence_suffix}\n"
         f"{record.get('token_name')} ({record.get('symbol')})\n"
         f"Token: {record['contract_address']}\n"
         f"Reading: {reading}\n"
@@ -1279,12 +1349,16 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
     holder_count = holder_count if isinstance(holder_count, int) else 0
     v5 = run_v5_analysis(meta.get("name", ""), meta.get("symbol", ""), deploy_ts, tx_amounts, holder_count, cia, creator_stats["rug_rate"])
     v6 = run_v6_analysis(address)
-    risk_percent, risk_reasons = calculate_risk(meta, cia, v5, v6, deployer_balance)
-    label = risk_status_from_percent(risk_percent)
+    risk_percent, risk_reasons, confidence, used_remote_scoring = score_with_optional_remote_engine(
+        meta, cia, v5, v6, deployer_balance,
+    )
+    base_label = risk_status_from_percent(risk_percent)
     risk_signal_reasons = list(risk_reasons)
-    confidence = confidence_from_modules(cia, v6)
     if confidence["level"] == "LOW":
         risk_reasons.append("degraded reading: insufficient TRON data")
+    # A result with mostly unavailable evidence cannot be presented as GOOD.
+    # Preserve the score-derived label separately for audits and comparisons.
+    label = "WARN" if confidence["level"] == "LOW" and base_label == "GOOD" else base_label
 
     record = {
         "chain": "TRON",
@@ -1304,12 +1378,13 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
         "pair": token_data.get("pair", ""),
         "label": label,
         "risk_percent": risk_percent,
-        "base_label": label,
+        "base_label": base_label,
         "base_risk_percent": risk_percent,
         "risk_signal_reasons": risk_signal_reasons,
         "risk_reasons": risk_reasons,
         "creator_stats": creator_stats,
         "confidence": confidence,
+        "scoring_engine": "remote" if used_remote_scoring else "local",
         "cia": cia,
         "v5": v5,
         "v6": v6,
