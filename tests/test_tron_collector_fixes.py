@@ -63,13 +63,15 @@ class TronCollectorFixTests(unittest.TestCase):
             "wash": {"status": "error", "error": "429"},
             "cluster": {"status": "error", "error": "429"},
         }
-        with tempfile.TemporaryDirectory() as temp_dir, patch.object(tron, "get_trc20_metadata", return_value={"name": "BLUC", "symbol": "BLUC", "decimals": 6, "total_supply": 1}), patch.object(tron, "get_creator_stats", return_value={"rug_rate": 0}), patch.object(tron, "run_cia_analysis", return_value=cia), patch.object(tron, "run_v5_analysis", return_value={}), patch.object(tron, "run_v6_analysis", return_value={"backdoor": {"status": "ok"}}), patch.object(tron, "calculate_risk", return_value=(23, ["thin TRON activity: 1 tx / 2 wallets"])), patch.object(tron, "previous_record", return_value=None), patch.object(tron, "save_to_postgres"), patch.object(tron, "append_markdown_scan_log"), patch.object(tron, "publish_recent_scan"), patch.object(tron, "update_creator_history"):
+        creation = {"status": "unavailable", "address": None, "deployment_timestamp": None, "error": "test"}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(tron, "get_trc20_metadata", return_value={"name": "BLUC", "symbol": "BLUC", "decimals": 6, "total_supply": 1}), patch.object(tron, "resolve_contract_creation_tron", return_value=creation), patch.object(tron, "get_creator_stats", return_value={"rug_rate": 0}), patch.object(tron, "run_cia_analysis", return_value=cia), patch.object(tron, "run_v5_analysis", return_value={}), patch.object(tron, "run_v6_analysis", return_value={"backdoor": {"status": "ok"}}), patch.object(tron, "calculate_risk", return_value=(23, ["thin TRON activity: 1 tx / 2 wallets"])), patch.object(tron, "previous_record", return_value=None), patch.object(tron, "save_to_postgres"), patch.object(tron, "append_markdown_scan_log"), patch.object(tron, "publish_recent_scan"), patch.object(tron, "update_creator_history"):
             record = tron.process_token({"address": "TNssvWyu48fuCRQkqfs9T4qX5T9PkBAxNN", "source": "test"}, Path(temp_dir) / "out.jsonl")
         self.assertEqual(record["label"], "WARN")
         self.assertEqual(record["base_label"], "GOOD")
         self.assertEqual(record["risk_percent"], 23)
         self.assertEqual(record["confidence"]["reading_status"], "degraded")
         self.assertIn("degraded reading: insufficient TRON data", record["risk_reasons"])
+        self.assertEqual(record["rugdna"]["creator"]["status"], "unavailable")
 
     def test_confidence_only_change_suppresses_telegram_alert(self):
         tron.last_alert_signatures.clear()

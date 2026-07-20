@@ -27,6 +27,7 @@ from typing import Any, Optional
 import psycopg2
 from psycopg2.extras import Json
 import requests
+from chains.rugdna_fingerprint import build_fingerprint
 
 
 def load_env(path: Path = Path(".env")) -> None:
@@ -495,6 +496,24 @@ def get_contract_bytecode(contract: str) -> str:
         return ""
 
 
+def resolve_contract_creation_tron(contract: str) -> dict[str, Any]:
+    """Read the public contract record; do not infer unavailable creation time."""
+    try:
+        result = full_node_post(
+            "/wallet/getcontract",
+            {"value": normalize_tron_address(contract), "visible": True},
+        )
+    except Exception as exc:
+        return {"status": "error", "address": None, "deployment_timestamp": None, "error": str(exc)}
+    creator = normalize_tron_address(result.get("origin_address", ""))
+    return {
+        "status": "partial" if creator else "unavailable",
+        "address": creator or None,
+        "deployment_timestamp": None,
+        "error": "creation_timestamp_not_returned_by_contract_record" if creator else "contract_record_missing_origin",
+    }
+
+
 def get_new_token_deployments(from_block: int, to_block: int) -> list[dict[str, Any]]:
     contracts: dict[str, dict[str, Any]] = {}
     for block_num in range(from_block, to_block + 1):
@@ -786,6 +805,7 @@ def detect_funding_origin(deployer: str, deploy_ts: int) -> dict[str, Any]:
         if to_addr == deployer and ts <= deploy_ts:
             incoming.append({"from": normalize_tron_address(raw.get("owner_address", "")), "amount": amount, "timestamp": ts})
     first_funding_age = deploy_ts - incoming[-1]["timestamp"] if incoming else -1
+    first_hop = max(incoming, key=lambda item: item.get("amount", 0)) if incoming else None
     return {
         "status": "ok",
         "error": "",
@@ -795,6 +815,14 @@ def detect_funding_origin(deployer: str, deploy_ts: int) -> dict[str, Any]:
         "all_fresh": bool(incoming) and first_funding_age < 3600,
         "hop_count": min(len(incoming), 5),
         "funders": incoming[-5:],
+        "first_hop": {
+            "status": "ok" if first_hop else "unavailable",
+            "address": first_hop.get("from") if first_hop else None,
+            "amount": first_hop.get("amount") if first_hop else None,
+            "timestamp": first_hop.get("timestamp") if first_hop else None,
+            "asset": "TRX",
+            "error": "" if first_hop else "no_incoming_funding_found",
+        },
     }
 
 
@@ -1338,8 +1366,15 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
         log.info("Skipping %s without valid TRC-20 metadata.", address)
         return None
 
-    deployer = normalize_tron_address(token_data.get("deployer", ""))
-    deploy_ts = timestamp_sec(token_data.get("timestamp")) if has_deployment_timestamp(token_data) else 0
+    supplied_deployer = normalize_tron_address(token_data.get("deployer", ""))
+    supplied_deploy_ts = timestamp_sec(token_data.get("timestamp")) if has_deployment_timestamp(token_data) else 0
+    creation = (
+        {"status": "ok", "address": supplied_deployer, "deployment_timestamp": supplied_deploy_ts, "error": ""}
+        if supplied_deployer and supplied_deploy_ts
+        else resolve_contract_creation_tron(address)
+    )
+    deployer = creation.get("address") or supplied_deployer
+    deploy_ts = creation.get("deployment_timestamp") or supplied_deploy_ts
     deployer_balance = get_trx_balance(deployer) if deployer else None
     creator_stats = get_creator_stats(deployer)
     cia = run_cia_analysis(address, deployer, deploy_ts)
@@ -1388,6 +1423,13 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
         "cia": cia,
         "v5": v5,
         "v6": v6,
+        "rugdna": build_fingerprint(
+            deployer,
+            deploy_ts or None,
+            cia.get("funding", {}),
+            {"status": "unavailable", "holders": [], "error": "not_available_in_existing_pipeline"},
+            creation,
+        ),
         "scan_timestamp": int(time.time()),
     }
     previous = previous_record(address)

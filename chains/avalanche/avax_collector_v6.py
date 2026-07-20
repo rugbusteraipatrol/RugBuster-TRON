@@ -27,6 +27,7 @@ from typing import Optional
 import psycopg2
 from psycopg2.extras import Json
 import requests
+from chains.rugdna_fingerprint import build_fingerprint
 
 try:
     from web3 import Web3
@@ -543,12 +544,13 @@ def detect_contract_backdoor_avax(contract_address: str) -> dict:
 # V6 MODULE 2: Holder Concentration Risk
 # ---------------------------------------------------------------------------
 
-def analyze_holder_concentration_avax(contract_address: str) -> dict:
+def analyze_holder_concentration_avax(contract_address: str, total_supply: object = 0) -> dict:
     result = {
         "top5_pct": 0.0,
         "top1_pct": 0.0,
         "is_concentrated": False,
         "concentration_risk": "LOW",
+        "holder_snapshot": {"status": "unavailable", "holders": [], "error": "holder_list_unavailable"},
     }
     holders = get_token_holders(contract_address)
     if not holders or len(holders) < 2:
@@ -557,9 +559,20 @@ def analyze_holder_concentration_avax(contract_address: str) -> dict:
     try:
         # Routescan vraća TokenHolderQuantity kao string
         amounts = []
+        raw_holders = []
+        try:
+            supply = float(str(total_supply or 0).replace(",", ""))
+        except (TypeError, ValueError):
+            supply = 0.0
         for h in holders[:10]:
             qty = h.get("TokenHolderQuantity", "0") or "0"
-            amounts.append(float(str(qty).replace(",", "")))
+            numeric_qty = float(str(qty).replace(",", ""))
+            amounts.append(numeric_qty)
+            raw_holders.append({
+                "address": h.get("TokenHolderAddress") or None,
+                "quantity": str(qty),
+                "ownership_pct": round(numeric_qty / supply * 100, 8) if supply > 0 else None,
+            })
 
         total = sum(amounts)
         if total == 0:
@@ -571,6 +584,11 @@ def analyze_holder_concentration_avax(contract_address: str) -> dict:
         result["top5_pct"] = round(top5 / total * 100, 1)
         result["top1_pct"] = round(top1 / total * 100, 1)
         result["is_concentrated"] = result["top5_pct"] > 80
+        result["holder_snapshot"] = {
+            "status": "ok" if supply > 0 else "partial",
+            "holders": raw_holders,
+            "error": "" if supply > 0 else "total_supply_unavailable",
+        }
 
         if result["top5_pct"] > 90:
             result["concentration_risk"] = "CRITICAL"
@@ -840,6 +858,7 @@ def trace_funding_origin_avax(deployer: str, depth: int = 3) -> dict:
         "funding_chain": [deployer],
         "all_fresh": False,
         "wallet_ages_days": [],
+        "first_hop": {"status": "unavailable", "address": None, "amount": None, "timestamp": None, "asset": "AVAX", "error": "no_incoming_funding_found"},
     }
     current = deployer
     chain_trace = [deployer]
@@ -852,6 +871,19 @@ def trace_funding_origin_avax(deployer: str, depth: int = 3) -> dict:
         first_tx = txs[0]
         sender = first_tx.get("from", "").lower()
         if sender and sender != current.lower() and sender != "0x0000000000000000000000000000000000000000":
+            if hop == 0:
+                try:
+                    amount = int(first_tx.get("value", 0) or 0) / 1e18
+                except (TypeError, ValueError):
+                    amount = None
+                result["first_hop"] = {
+                    "status": "ok",
+                    "address": sender,
+                    "amount": amount,
+                    "timestamp": int(first_tx.get("timeStamp", 0) or 0) or None,
+                    "asset": "AVAX",
+                    "error": "",
+                }
             chain_trace.append(sender)
             current = sender
             result["hop_count"] = hop + 1
@@ -1035,7 +1067,7 @@ def run_v5_analysis_avax(contract_address: str, deployer: str, deploy_timestamp:
     return v5
 
 
-def run_v6_analysis_avax(contract_address: str, deployer: str, deploy_timestamp: int) -> dict:
+def run_v6_analysis_avax(contract_address: str, deployer: str, deploy_timestamp: int, token_info: dict | None = None) -> dict:
     log.info("  [V6] Pokrenuta analiza...")
     v6 = {}
 
@@ -1045,7 +1077,7 @@ def run_v6_analysis_avax(contract_address: str, deployer: str, deploy_timestamp:
         log.warning("  [V6] Backdoor funkcije: %s", v6["backdoor"]["backdoor_functions"])
 
     log.info("  [V6] Holder concentration...")
-    v6["concentration"] = analyze_holder_concentration_avax(contract_address)
+    v6["concentration"] = analyze_holder_concentration_avax(contract_address, (token_info or {}).get("total_supply", 0))
     if v6["concentration"]["concentration_risk"] in ("HIGH", "CRITICAL"):
         log.warning("  [V6] Koncentracija: %s (top5=%s%%)",
                     v6["concentration"]["concentration_risk"],
@@ -1363,6 +1395,12 @@ Rug Velocity: score={vel.get('velocity_score', 0)} | Fast rug: {vel.get('is_fast
         "v6_concentration_risk": conc.get("concentration_risk", "LOW"),
         "v6_rug_velocity_score": vel.get("velocity_score", 0.0),
         "v6_is_fast_rug": vel.get("is_fast_rug", False),
+        "rugdna": build_fingerprint(
+            deployer,
+            deploy_timestamp,
+            funding,
+            conc.get("holder_snapshot"),
+        ),
     }
 
 
@@ -1915,7 +1953,7 @@ def process_token_avax(token_data: dict, output_path: Path) -> dict | None:
         token_info.get("name", "Unknown"), token_info.get("symbol", ""),
         tx_amounts, holder_count, cia_intel, creator_stats["rug_rate"]
     )
-    v6_intel = run_v6_analysis_avax(contract, deployer, deploy_timestamp)
+    v6_intel = run_v6_analysis_avax(contract, deployer, deploy_timestamp, token_info)
 
     log.info("  [V6] %s", v6_success_rate(v5_intel, v6_intel))
 
@@ -2385,7 +2423,7 @@ def scan_single_avax(address: str) -> None:
         token_info.get("name", "Unknown"), token_info.get("symbol", ""),
         tx_amounts, holder_count, cia_intel, creator_stats["rug_rate"]
     )
-    v6_intel = run_v6_analysis_avax(address, deployer, deploy_timestamp)
+    v6_intel = run_v6_analysis_avax(address, deployer, deploy_timestamp, token_info)
 
     _, risk_flags = classify_avax_token_v6(token_info, cia_intel, v5_intel, v6_intel, deployer_balance)
     risk_percent, avax_risk_reasons = calculate_rugbuster_avax_risk(

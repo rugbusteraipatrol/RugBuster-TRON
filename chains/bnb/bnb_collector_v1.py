@@ -27,6 +27,7 @@ from typing import Optional
 import psycopg2
 from psycopg2.extras import Json
 import requests
+from chains.rugdna_fingerprint import build_fingerprint
 
 try:
     from web3 import Web3
@@ -538,12 +539,13 @@ def detect_contract_backdoor_BNB(contract_address: str) -> dict:
 # V6 MODULE 2: Holder Concentration Risk
 # ---------------------------------------------------------------------------
 
-def analyze_holder_concentration_BNB(contract_address: str) -> dict:
+def analyze_holder_concentration_BNB(contract_address: str, total_supply: object = 0) -> dict:
     result = {
         "top5_pct": 0.0,
         "top1_pct": 0.0,
         "is_concentrated": False,
         "concentration_risk": "LOW",
+        "holder_snapshot": {"status": "unavailable", "holders": [], "error": "holder_list_unavailable"},
     }
     holders = get_token_holders(contract_address)
     if not holders or len(holders) < 2:
@@ -552,9 +554,20 @@ def analyze_holder_concentration_BNB(contract_address: str) -> dict:
     try:
         # Routescan vraća TokenHolderQuantity kao string
         amounts = []
+        raw_holders = []
+        try:
+            supply = float(str(total_supply or 0).replace(",", ""))
+        except (TypeError, ValueError):
+            supply = 0.0
         for h in holders[:10]:
             qty = h.get("TokenHolderQuantity", "0") or "0"
-            amounts.append(float(str(qty).replace(",", "")))
+            numeric_qty = float(str(qty).replace(",", ""))
+            amounts.append(numeric_qty)
+            raw_holders.append({
+                "address": h.get("TokenHolderAddress") or None,
+                "quantity": str(qty),
+                "ownership_pct": round(numeric_qty / supply * 100, 8) if supply > 0 else None,
+            })
 
         total = sum(amounts)
         if total == 0:
@@ -566,6 +579,11 @@ def analyze_holder_concentration_BNB(contract_address: str) -> dict:
         result["top5_pct"] = round(top5 / total * 100, 1)
         result["top1_pct"] = round(top1 / total * 100, 1)
         result["is_concentrated"] = result["top5_pct"] > 80
+        result["holder_snapshot"] = {
+            "status": "ok" if supply > 0 else "partial",
+            "holders": raw_holders,
+            "error": "" if supply > 0 else "total_supply_unavailable",
+        }
 
         if result["top5_pct"] > 90:
             result["concentration_risk"] = "CRITICAL"
@@ -813,6 +831,28 @@ def get_contract_transactions(address: str, limit: int = 50) -> list:
     return result if result else []
 
 
+def resolve_contract_creation_BNB(address: str) -> dict:
+    """Read the existing explorer source once and retain creator evidence."""
+    try:
+        txs = get_contract_transactions(address, limit=1)
+    except Exception as exc:
+        return {"status": "error", "address": None, "deployment_timestamp": None, "error": str(exc)}
+    if not txs:
+        return {"status": "unavailable", "address": None, "deployment_timestamp": None, "error": "creation_transaction_unavailable"}
+    tx = txs[0]
+    creator = str(tx.get("from") or "").lower()
+    try:
+        timestamp = int(tx.get("timeStamp") or 0) or None
+    except (TypeError, ValueError):
+        timestamp = None
+    return {
+        "status": "ok" if creator else "unavailable",
+        "address": creator or None,
+        "deployment_timestamp": timestamp,
+        "error": "" if creator else "creation_transaction_missing_sender",
+    }
+
+
 def get_token_transfers(address: str, limit: int = 50) -> list:
     params = {
         "module": "account", "action": "tokentx",
@@ -943,6 +983,7 @@ def trace_funding_origin_BNB(deployer: str, depth: int = 3) -> dict:
         "funding_chain": [deployer],
         "all_fresh": False,
         "wallet_ages_days": [],
+        "first_hop": {"status": "unavailable", "address": None, "amount": None, "timestamp": None, "asset": "BNB", "error": "no_incoming_funding_found"},
     }
     current = deployer
     chain_trace = [deployer]
@@ -955,6 +996,19 @@ def trace_funding_origin_BNB(deployer: str, depth: int = 3) -> dict:
         first_tx = txs[0]
         sender = first_tx.get("from", "").lower()
         if sender and sender != current.lower() and sender != "0x0000000000000000000000000000000000000000":
+            if hop == 0:
+                try:
+                    amount = int(first_tx.get("value", 0) or 0) / 1e18
+                except (TypeError, ValueError):
+                    amount = None
+                result["first_hop"] = {
+                    "status": "ok",
+                    "address": sender,
+                    "amount": amount,
+                    "timestamp": int(first_tx.get("timeStamp", 0) or 0) or None,
+                    "asset": "BNB",
+                    "error": "",
+                }
             chain_trace.append(sender)
             current = sender
             result["hop_count"] = hop + 1
@@ -1138,7 +1192,7 @@ def run_v5_analysis_BNB(contract_address: str, deployer: str, deploy_timestamp: 
     return v5
 
 
-def run_v6_analysis_BNB(contract_address: str, deployer: str, deploy_timestamp: int) -> dict:
+def run_v6_analysis_BNB(contract_address: str, deployer: str, deploy_timestamp: int, token_info: dict | None = None) -> dict:
     log.info("  [V6] Pokrenuta analiza...")
     v6 = {}
 
@@ -1148,7 +1202,7 @@ def run_v6_analysis_BNB(contract_address: str, deployer: str, deploy_timestamp: 
         log.warning("  [V6] Backdoor funkcije: %s", v6["backdoor"]["backdoor_functions"])
 
     log.info("  [V6] Holder concentration...")
-    v6["concentration"] = analyze_holder_concentration_BNB(contract_address)
+    v6["concentration"] = analyze_holder_concentration_BNB(contract_address, (token_info or {}).get("total_supply", 0))
     if v6["concentration"]["concentration_risk"] in ("HIGH", "CRITICAL"):
         log.warning("  [V6] Koncentracija: %s (top5=%s%%)",
                     v6["concentration"]["concentration_risk"],
@@ -1974,8 +2028,15 @@ def process_token_BNB(token_data: dict, output_path: Path) -> dict | None:
         return None
     seen_contracts[contract] = time.time()
 
-    deployer = token_data.get("deployer", "")
-    deploy_timestamp = token_data.get("timestamp", int(time.time()))
+    supplied_deployer = str(token_data.get("deployer") or "").lower()
+    supplied_timestamp = token_data.get("timestamp")
+    creation = (
+        {"status": "ok", "address": supplied_deployer, "deployment_timestamp": supplied_timestamp, "error": ""}
+        if token_data.get("source") == "contract_deploy" and supplied_deployer and supplied_timestamp
+        else resolve_contract_creation_BNB(contract)
+    )
+    deployer = creation.get("address") or token_data.get("deployer", "")
+    deploy_timestamp = creation.get("deployment_timestamp") or token_data.get("timestamp", int(time.time()))
     name = token_data.get("name", "Unknown")
     symbol = token_data.get("symbol", "")
 
@@ -2006,7 +2067,7 @@ def process_token_BNB(token_data: dict, output_path: Path) -> dict | None:
         token_info.get("name", "Unknown"), token_info.get("symbol", ""),
         tx_amounts, holder_count, cia_intel, creator_stats["rug_rate"]
     )
-    v6_intel = run_v6_analysis_BNB(contract, deployer, deploy_timestamp)
+    v6_intel = run_v6_analysis_BNB(contract, deployer, deploy_timestamp, token_info)
 
     log.info("  [V6] %s", v6_success_rate(v5_intel, v6_intel))
 
@@ -2015,6 +2076,13 @@ def process_token_BNB(token_data: dict, output_path: Path) -> dict | None:
     record = build_training_record_v6(
         contract, token_info, deployer, deploy_timestamp,
         creator_stats, cia_intel, v5_intel, v6_intel, label, risk_flags
+    )
+    record["rugdna"] = build_fingerprint(
+        deployer,
+        deploy_timestamp,
+        cia_intel.get("funding", {}),
+        v6_intel.get("concentration", {}).get("holder_snapshot"),
+        creation,
     )
     append_to_dataset(record, output_path)
     update_creator_history(deployer, label)
@@ -2482,7 +2550,7 @@ def scan_single_BNB(address: str) -> None:
         token_info.get("name", "Unknown"), token_info.get("symbol", ""),
         tx_amounts, holder_count, cia_intel, creator_stats["rug_rate"]
     )
-    v6_intel = run_v6_analysis_BNB(address, deployer, deploy_timestamp)
+    v6_intel = run_v6_analysis_BNB(address, deployer, deploy_timestamp, token_info)
 
     label, risk_flags = classify_BNB_token_v6(token_info, cia_intel, v5_intel, v6_intel, deployer_balance)
 
