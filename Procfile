@@ -1,1 +1,1 @@
-worker: python chains/multichain_worker.py
+worker: python chains/tron/tron_worker.py
