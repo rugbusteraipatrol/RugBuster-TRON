@@ -1063,7 +1063,11 @@ def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any]
     established_active_contract = (
         token_age_days >= 365
         and isinstance(tx_count, int)
-        and tx_count >= 100
+        # Transfer APIs return a bounded recent sample, not a token's lifetime
+        # activity. Seventy-five independent transfers plus fifty wallets is
+        # enough to establish active use without treating a one-off spike as
+        # broad adoption.
+        and tx_count >= 75
         and isinstance(unique_wallets, int)
         and unique_wallets >= 50
         and not any(
