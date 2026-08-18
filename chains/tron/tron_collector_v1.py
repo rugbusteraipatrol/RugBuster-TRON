@@ -916,6 +916,7 @@ def detect_wash_pattern(
 def detect_holder_cluster_age(
     token: str,
     transfer_result: Optional[tuple[list[dict[str, Any]], str, str]] = None,
+    max_wallets: int = 25,
 ) -> dict[str, Any]:
     transfers, status, error = transfer_result or get_token_transfers_checked(token, limit=200)
     if status != "ok":
@@ -932,13 +933,15 @@ def detect_holder_cluster_age(
     wallets = []
     for transfer in transfers:
         wallets.extend([normalize_tron_address(transfer.get("from", "")), normalize_tron_address(transfer.get("to", ""))])
-    unique_wallets = [w for w in dict.fromkeys(wallets) if w and w not in BASE_TOKEN_ADDRESSES][:25]
+    unique_wallets = [w for w in dict.fromkeys(wallets) if w and w not in BASE_TOKEN_ADDRESSES][:max(1, max_wallets)]
     fresh = 0
     ages = []
+    failed_wallets = 0
     now = int(time.time())
     for wallet in unique_wallets:
         txs, wallet_status, _ = get_account_transactions_checked(wallet, limit=10)
         if wallet_status != "ok":
+            failed_wallets += 1
             continue
         first = min([timestamp_sec(tx.get("block_timestamp")) for tx in txs if tx.get("block_timestamp")] or [0])
         if first:
@@ -947,11 +950,13 @@ def detect_holder_cluster_age(
             if age < 86_400:
                 fresh += 1
     fresh_ratio = fresh / max(len(ages), 1)
+    status = "ok" if ages or not unique_wallets else "unavailable"
     return {
-        "status": "ok",
-        "error": "",
+        "status": status,
+        "error": "" if status == "ok" else "wallet_history_unavailable",
         "total_checked": len(unique_wallets),
         "wallets_with_age": len(ages),
+        "wallet_history_failures": failed_wallets,
         "fresh_wallet_count": fresh,
         "fresh_wallet_ratio": round(fresh_ratio, 3),
         "median_age_sec": int(statistics.median(ages)) if ages else -1,
@@ -959,47 +964,66 @@ def detect_holder_cluster_age(
     }
 
 
-BACKDOOR_SIGNATURES = {
+ADMIN_SIGNATURES = {
     "8da5cb5b": "owner()",
     "f2fde38b": "transferOwnership(address)",
     "715018a6": "renounceOwnership()",
-    "42966c68": "burn(uint256)",
-    "40c10f19": "mint(address,uint256)",
-    "3ccfd60b": "withdraw()",
-    "2e1a7d4d": "withdraw(uint256)",
-    "51cff8d9": "withdrawToken(address)",
-    "3659cfe6": "upgradeTo(address)",
-    "8456cb59": "pause()",
-    "3f4ba83a": "unpause()",
-    "044df020": "blacklist(address)",
+}
+PRIVILEGED_SIGNATURES = {
+    "40c10f19": ("mint(address,uint256)", 25),
+    "3ccfd60b": ("withdraw()", 40),
+    "2e1a7d4d": ("withdraw(uint256)", 40),
+    "51cff8d9": ("withdrawToken(address)", 40),
+    "3659cfe6": ("upgradeTo(address)", 35),
+    "8456cb59": ("pause()", 20),
+    "044df020": ("blacklist(address)", 30),
 }
 
 
 def detect_contract_backdoor(token: str) -> dict[str, Any]:
-    bytecode = get_contract_bytecode(token).lower()
-    if not bytecode:
+    try:
+        contract_data = full_node_post("/wallet/getcontract", {"value": normalize_tron_address(token), "visible": True})
+    except Exception:
+        contract_data = {}
+    bytecode = str(contract_data.get("bytecode") or get_contract_bytecode(token)).lower()
+    entries = contract_data.get("abi", {}).get("entrys", []) if isinstance(contract_data.get("abi"), dict) else []
+    abi_names = {
+        str(entry.get("name") or "")
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("type") == "Function"
+    }
+    if not bytecode and not abi_names:
         return {
             "status": "unavailable",
             "error": "bytecode_unavailable",
             "has_backdoor": False,
             "backdoor_functions": [],
+            "admin_functions": [],
             "has_mint_function": False,
             "has_pause_function": False,
             "has_blacklist": False,
             "has_drain_function": False,
             "backdoor_risk_score": 0,
         }
-    found = [name for sig, name in BACKDOOR_SIGNATURES.items() if sig in bytecode]
+    if abi_names:
+        admin = [name for name in ADMIN_SIGNATURES.values() if name.split("(", 1)[0] in abi_names]
+        privileged = [name for name, _ in PRIVILEGED_SIGNATURES.values() if name.split("(", 1)[0] in abi_names]
+    else:
+        admin = [name for sig, name in ADMIN_SIGNATURES.items() if sig in bytecode]
+        privileged = [name for sig, (name, _) in PRIVILEGED_SIGNATURES.items() if sig in bytecode]
+    score_by_name = {name: score for name, score in PRIVILEGED_SIGNATURES.values()}
+    risk_score = min(sum(score_by_name[name] for name in privileged), 100)
     return {
         "status": "ok",
         "error": "",
-        "has_backdoor": bool(found),
-        "backdoor_functions": found,
-        "has_mint_function": any("mint" in name for name in found),
-        "has_pause_function": any("pause" in name for name in found),
-        "has_blacklist": any("blacklist" in name.lower() for name in found),
-        "has_drain_function": any("withdraw" in name for name in found),
-        "backdoor_risk_score": min(len(found) * 15, 100),
+        "has_backdoor": bool(privileged),
+        "backdoor_functions": privileged,
+        "admin_functions": admin,
+        "has_mint_function": any("mint" in name for name in privileged),
+        "has_pause_function": any("pause" in name for name in privileged),
+        "has_blacklist": any("blacklist" in name.lower() for name in privileged),
+        "has_drain_function": any("withdraw" in name for name in privileged),
+        "backdoor_risk_score": risk_score,
     }
 
 
@@ -1049,7 +1073,7 @@ def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any]
         # A detected privileged bytecode signature must not be classified low-risk
         # just because it is the only signature found.
         risk += min(35, max(25, backdoor_score // 2))
-        reasons.append(f"bytecode backdoor risk {backdoor_score}/100")
+        reasons.append(f"privileged contract control risk {backdoor_score}/100")
     tx_count = entropy.get("tx_count")
     unique_wallets = entropy.get("unique_wallets")
     if isinstance(tx_count, int) and isinstance(unique_wallets, int) and 0 < tx_count <= 25 and unique_wallets <= 25:
@@ -1141,14 +1165,14 @@ def score_with_optional_remote_engine(
         return local_risk, local_reasons, local_confidence, False
 
 
-def run_cia_analysis(token: str, deployer: str, deploy_ts: int) -> dict[str, Any]:
+def run_cia_analysis(token: str, deployer: str, deploy_ts: int, *, holder_sample_size: int = 25) -> dict[str, Any]:
     transfer_result = get_token_transfers_checked(token, limit=200)
     return {
         "funding": detect_funding_origin(deployer, deploy_ts),
         "latency": detect_deployment_latency(token, deploy_ts, transfer_result),
         "entropy": detect_tx_entropy(token, transfer_result),
         "wash": detect_wash_pattern(token, transfer_result),
-        "cluster": detect_holder_cluster_age(token, transfer_result),
+        "cluster": detect_holder_cluster_age(token, transfer_result, max_wallets=holder_sample_size),
     }
 
 
