@@ -1054,6 +1054,29 @@ def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any]
     entropy = cia.get("entropy", {})
     wash = cia.get("wash", {})
     backdoor_score = int(backdoor.get("backdoor_risk_score", 0) or 0)
+    tx_count = entropy.get("tx_count")
+    unique_wallets = entropy.get("unique_wallets")
+    try:
+        token_age_days = int(meta.get("token_age_days") or 0)
+    except (TypeError, ValueError):
+        token_age_days = 0
+    established_active_contract = (
+        token_age_days >= 365
+        and isinstance(tx_count, int)
+        and tx_count >= 100
+        and isinstance(unique_wallets, int)
+        and unique_wallets >= 50
+        and not any(
+            (
+                cia.get("funding", {}).get("all_fresh"),
+                cia.get("latency", {}).get("is_sniped"),
+                entropy.get("is_bot_pattern"),
+                wash.get("wash_detected"),
+                cia.get("cluster", {}).get("is_bot_farm"),
+                style.get("brand_impersonation"),
+            )
+        )
+    )
     checks = [
         (cia.get("funding", {}).get("all_fresh"), 16, "fresh deployer funding"),
         (cia.get("latency", {}).get("is_sniped"), 12, "sniped first transfer"),
@@ -1070,17 +1093,23 @@ def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any]
             risk += points
             reasons.append(reason)
     if backdoor.get("has_backdoor") or backdoor_score >= 40:
-        # A detected privileged bytecode signature must not be classified low-risk
-        # just because it is the only signature found.
-        risk += min(35, max(25, backdoor_score // 2))
-        reasons.append(f"privileged contract control risk {backdoor_score}/100")
-    tx_count = entropy.get("tx_count")
-    unique_wallets = entropy.get("unique_wallets")
+        if established_active_contract:
+            risk += min(12, max(6, backdoor_score // 10))
+            reasons.append(f"issuer/admin controls on established active contract {backdoor_score}/100")
+        else:
+            risk += min(35, max(25, backdoor_score // 2))
+            reasons.append(f"privileged contract control risk {backdoor_score}/100")
     if isinstance(tx_count, int) and isinstance(unique_wallets, int) and 0 < tx_count <= 25 and unique_wallets <= 25:
         risk += 8
         reasons.append(f"thin TRON activity: {tx_count} tx / {unique_wallets} wallets")
     edge_count = wash.get("edge_count")
-    if isinstance(edge_count, int) and edge_count >= 15 and not wash.get("wash_detected"):
+    if (
+        isinstance(edge_count, int)
+        and 0 < edge_count <= 12
+        and isinstance(tx_count, int)
+        and tx_count <= 25
+        and not wash.get("wash_detected")
+    ):
         risk += 6
         reasons.append(f"thin transfer graph edges: {edge_count}")
     unavailable = {
@@ -1203,8 +1232,8 @@ def confidence_from_modules(cia: dict[str, Any], v6: dict[str, Any]) -> dict[str
         if module_status(result) in {"error", "unavailable", "invalid"}
     ]
     return {
-        "level": "LOW" if len(missing) >= 3 else "NORMAL",
-        "reading_status": "degraded" if len(missing) >= 3 else "complete",
+        "level": "LOW" if missing else "NORMAL",
+        "reading_status": "degraded" if missing else "complete",
         "missing_module_count": len(missing),
         "missing_modules": missing,
     }
