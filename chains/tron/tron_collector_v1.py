@@ -1096,10 +1096,28 @@ def calculate_risk(meta: dict[str, Any], cia: dict[str, Any], v5: dict[str, Any]
         if active:
             risk += points
             reasons.append(reason)
+    # `established_active_contract` can only ever be True when age, transfer count
+    # and wallet count are all present, and all three come from modules a basic
+    # scan does not run. Without this distinction the branch below reads a tier
+    # boundary as a finding: it concludes "not established" about a contract it
+    # never looked at, and every issuer-controlled token -- which is what a
+    # centrally issued stablecoin is -- takes the aggravated penalty.
+    maturity_evidence_available = (
+        isinstance(tx_count, int) and isinstance(unique_wallets, int) and token_age_days > 0
+    )
     if backdoor.get("has_backdoor") or backdoor_score >= 40:
         if established_active_contract:
             risk += min(12, max(6, backdoor_score // 10))
             reasons.append(f"issuer/admin controls on established active contract {backdoor_score}/100")
+        elif not maturity_evidence_available:
+            # The privileged ABI is an observed fact and still counts. What is not
+            # observed is whether the contract has a track record, so the
+            # aggravation that presumes it has none is withheld.
+            risk += min(20, max(12, backdoor_score // 4))
+            reasons.append(
+                f"privileged contract control {backdoor_score}/100, "
+                "contract maturity not assessed on this scan tier"
+            )
         else:
             risk += min(35, max(25, backdoor_score // 2))
             reasons.append(f"privileged contract control risk {backdoor_score}/100")
