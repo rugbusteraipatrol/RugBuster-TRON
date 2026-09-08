@@ -33,15 +33,27 @@ services track `master`, so there is no second branch left to fall behind.
 If you find yourself creating a branch to change a start command, add a config
 file and set `RAILWAY_CONFIG_PATH` instead.
 
-## Changing `RAILWAY_CONFIG_PATH` requires a rebuild, not a redeploy
+## The Procfile decides which process starts
 
-Which config file Railway reads is decided at **build** time. `railway redeploy`
-reuses the existing image, so it replays the old start command no matter what
-the variable now says — the service comes back up running the wrong process and
-the deployment still reports SUCCESS.
+`railway.api.json` alone was not enough. The collector kept starting even after
+a genuinely fresh build with `RAILWAY_CONFIG_PATH` set, and the deployment
+reported SUCCESS every time.
 
-Setting the variable and redeploying is therefore not enough. Push a commit (or
-run `railway up`) so a fresh build picks the variable up.
+The difference from the working `bnb-api` service is the `Procfile`. BNB's has a
+`web:` entry pointing at gunicorn; TRON's had only `worker:`, so the builder
+started the worker. The `Procfile` here now carries both:
 
-This cost a confusing half hour on `tron-api`: the variable was set, the
-deployment was green, and the collector kept starting instead of the API.
+```
+web: gunicorn api.tron_api:app --bind 0.0.0.0:$PORT
+worker: python chains/tron/tron_worker.py
+```
+
+`railway.json` still pins the collector service's start command explicitly,
+which is what keeps the collector service running the collector.
+
+Note that `railway redeploy` reuses the existing image, so it replays the old
+start command. After changing build-time configuration, push a commit or run
+`railway up` to force a real rebuild.
+
+**Check the runtime log, not the deployment status.** A service starting the
+wrong process still reports SUCCESS, and the only outward symptom is a 502.
