@@ -32,3 +32,16 @@ services track `master`, so there is no second branch left to fall behind.
 
 If you find yourself creating a branch to change a start command, add a config
 file and set `RAILWAY_CONFIG_PATH` instead.
+
+## Changing `RAILWAY_CONFIG_PATH` requires a rebuild, not a redeploy
+
+Which config file Railway reads is decided at **build** time. `railway redeploy`
+reuses the existing image, so it replays the old start command no matter what
+the variable now says — the service comes back up running the wrong process and
+the deployment still reports SUCCESS.
+
+Setting the variable and redeploying is therefore not enough. Push a commit (or
+run `railway up`) so a fresh build picks the variable up.
+
+This cost a confusing half hour on `tron-api`: the variable was set, the
+deployment was green, and the collector kept starting instead of the API.
