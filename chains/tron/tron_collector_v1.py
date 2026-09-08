@@ -107,6 +107,7 @@ BASE_TOKEN_ADDRESSES = {
     "TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7",  # WIN
 }
 
+TRONSCAN_API = clean_env_value("TRONSCAN_API", "https://apilist.tronscanapi.com")
 TRONSCAN_ACCOUNT_URL = "https://tronscan.org/#/address/{address}"
 TRONSCAN_TX_URL = "https://tronscan.org/#/transaction/{txid}"
 
@@ -493,6 +494,72 @@ def get_contract_bytecode(contract: str) -> str:
         return str(result.get("bytecode") or "")
     except Exception:
         return ""
+
+
+def get_contract_provenance(contract: str) -> dict[str, Any]:
+    """Creation facts for an arbitrary contract: who deployed it, and when.
+
+    The collector receives both with every feed item. A user pasting a bare
+    address supplies neither, which left funding_origin and deployment_latency
+    unavailable and the whole reading marked LOW confidence -- so a lookup of
+    USDT came back WARN for want of two fields that are public.
+
+    getcontract carries `origin_address` but no creation time. TronScan's
+    contract endpoint carries both, so it is tried first and the full node is
+    the fallback for the creator alone. When only the creator is recovered the
+    result stays incomplete and says so, rather than implying a timestamp.
+    """
+    address = normalize_tron_address(contract)
+    result: dict[str, Any] = {
+        "status": "unavailable", "source": "", "error": "",
+        "deployer": "", "deploy_timestamp": 0,
+    }
+    if not address:
+        result["error"] = "invalid_contract_address"
+        return result
+
+    try:
+        throttle()
+        response = requests.get(
+            f"{TRONSCAN_API.rstrip('/')}/api/contract",
+            params={"contract": address},
+            headers={"Accept": "application/json"},
+            timeout=API_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload.get("data", []) if isinstance(payload, dict) else []
+        row = rows[0] if isinstance(rows, list) and rows else {}
+        if not isinstance(row, dict) or normalize_tron_address(row.get("address", "")) != address:
+            raise ValueError("contract_provenance_not_found")
+        creator = row.get("creator") if isinstance(row.get("creator"), dict) else {}
+        result.update({
+            "source": "tronscan_contract",
+            "deployer": normalize_tron_address(str(creator.get("address") or "")),
+            "deploy_timestamp": timestamp_sec(row.get("date_created")),
+        })
+    except Exception as exc:
+        result["error"] = type(exc).__name__
+
+    if not result["deployer"]:
+        try:
+            contract_data = full_node_post(
+                "/wallet/getcontract",
+                {"value": address, "visible": True},
+            )
+            result["deployer"] = normalize_tron_address(str(contract_data.get("origin_address") or ""))
+            if result["deployer"]:
+                result["source"] = "trongrid_getcontract"
+        except Exception as exc:
+            if not result["error"]:
+                result["error"] = type(exc).__name__
+
+    if result["deployer"] and result["deploy_timestamp"]:
+        result["status"] = "ok"
+        result["error"] = ""
+    elif result["deployer"]:
+        result["status"] = "incomplete"
+    return result
 
 
 def get_new_token_deployments(from_block: int, to_block: int) -> list[dict[str, Any]]:
@@ -1399,9 +1466,30 @@ def run_until_reached() -> bool:
         return False
 
 
-def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dict[str, Any]]:
+def build_token_record(
+    token_data: dict[str, Any], *, holder_sample_size: int = 25
+) -> Optional[dict[str, Any]]:
+    """Read a token and score it, with no side effects at all.
+
+    Split out of process_token so a user-facing lookup can reach the same
+    analysis without the collector's write path. process_token appends to a
+    JSONL file, writes Postgres, appends the markdown scan log, sends a
+    Telegram alert and publishes to the public recent-scans feed. Those are
+    right for a background crawl and wrong for someone pasting an address
+    into a search box: a lookup must not raise an alert or put the token on
+    a public feed.
+
+    holder_sample_size is exposed because an interactive request cannot wait
+    for the crawl's 25-wallet sample; the caller can trade breadth for
+    latency without changing anything else about the reading.
+    """
     address = normalize_tron_address(token_data.get("address", ""))
-    if not address:
+    # normalize_tron_address returns unrecognised input unchanged, so a bare
+    # emptiness check lets a malformed address through and yields a scored
+    # record for something that is not an address at all. The API validates
+    # separately, but this is reusable now and should not depend on callers
+    # remembering to.
+    if not address or not address.startswith("T") or not tron_base58_to_hex(address):
         return None
     meta = get_trc20_metadata(address)
     if token_data.get("name") and not meta.get("name"):
@@ -1418,9 +1506,14 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
 
     deployer = normalize_tron_address(token_data.get("deployer", ""))
     deploy_ts = timestamp_sec(token_data.get("timestamp")) if has_deployment_timestamp(token_data) else 0
+    if not deployer or not deploy_ts:
+        # Feed items carry both; a bare address lookup carries neither.
+        provenance = get_contract_provenance(address)
+        deployer = deployer or provenance["deployer"]
+        deploy_ts = deploy_ts or provenance["deploy_timestamp"]
     deployer_balance = get_trx_balance(deployer) if deployer else None
     creator_stats = get_creator_stats(deployer)
-    cia = run_cia_analysis(address, deployer, deploy_ts)
+    cia = run_cia_analysis(address, deployer, deploy_ts, holder_sample_size=holder_sample_size)
     dominant_amount = cia.get("entropy", {}).get("dominant_amount")
     tx_amounts = [dominant_amount] if isinstance(dominant_amount, (int, float)) else []
     holder_count = cia.get("cluster", {}).get("total_checked")
@@ -1468,15 +1561,28 @@ def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dic
         "v6": v6,
         "scan_timestamp": int(time.time()),
     }
+    return record
+
+
+def process_token(token_data: dict[str, Any], output_path: Path) -> Optional[dict[str, Any]]:
+    """Collector entrypoint: build the record, then persist and announce it."""
+    record = build_token_record(token_data)
+    if record is None:
+        return None
+    address = record["contract_address"]
+
     previous = previous_record(address)
     append_jsonl(output_path, record)
     save_to_postgres(record)
     append_markdown_scan_log(record)
     send_telegram_alert(record, previous)
     publish_recent_scan(record)
-    update_creator_history(deployer, label)
+    update_creator_history(record.get("deployer") or "", record["label"])
     seen_contracts[address] = time.time()
-    log.info("Scanned %s (%s): %s risk=%d%%", record["token_name"], record["symbol"], label, risk_percent)
+    log.info(
+        "Scanned %s (%s): %s risk=%d%%",
+        record["token_name"], record["symbol"], record["label"], record["risk_percent"],
+    )
     return record
 
 

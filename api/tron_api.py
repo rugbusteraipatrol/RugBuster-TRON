@@ -143,6 +143,54 @@ def latest_record(address: str) -> dict[str, Any] | None:
         conn.close()
 
 
+# A lookup must not cost a fresh chain crawl every time someone refreshes the
+# page. This is a per-process cache only: no Postgres write, so a user query
+# never lands in the collector's dataset or the public feed.
+LOOKUP_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+LOOKUP_CACHE_TTL_SECONDS = int(os.getenv("TRON_LOOKUP_CACHE_TTL", "600"))
+LOOKUP_HOLDER_SAMPLE = int(os.getenv("TRON_LOOKUP_HOLDER_SAMPLE", "8"))
+
+
+def cached_lookup(address: str) -> dict[str, Any] | None:
+    entry = LOOKUP_CACHE.get(address)
+    if not entry:
+        return None
+    stored_at, record = entry
+    if time.time() - stored_at > LOOKUP_CACHE_TTL_SECONDS:
+        LOOKUP_CACHE.pop(address, None)
+        return None
+    return record
+
+
+def lookup_live(address: str) -> dict[str, Any]:
+    """Score a token the collector has never seen, without side effects.
+
+    Before this existed, /score answered 404 `not_found` for anything outside
+    the collector's table -- including USDT and WTRX, the two largest tokens
+    on the chain. A scanner that cannot answer for its own majors fails on a
+    user's first attempt regardless of how well it scores everything else.
+
+    Deliberately not tron.process_token: that appends a JSONL record, writes
+    Postgres, appends the markdown log, sends a Telegram alert and publishes
+    to the public recent-scans feed. Someone checking an address must not
+    trigger an alert or appear on a public feed.
+
+    The holder sample is smaller than the crawl's because this call is
+    interactive; the reading is otherwise identical.
+    """
+    cached = cached_lookup(address)
+    if cached is not None:
+        return cached
+    record = tron.build_token_record(
+        {"address": address, "timestamp": int(time.time()), "source": "tron_api_lookup"},
+        holder_sample_size=LOOKUP_HOLDER_SAMPLE,
+    )
+    if not record:
+        raise RuntimeError("TRC-20 metadata unavailable or token scan returned no record")
+    LOOKUP_CACHE[address] = (time.time(), record)
+    return record
+
+
 def scan_live(address: str) -> dict[str, Any]:
     token_data = {
         "address": address,
@@ -257,9 +305,22 @@ def tron_score():
     if not valid_tron_address(address):
         return jsonify({"ok": False, "error": "invalid_tron_address"}), 400
     record = latest_record(address)
-    if not record:
-        return jsonify({"ok": False, "error": "not_found", "chain": "tron", "address": address}), 404
-    return jsonify(api_record(record, "postgres_cache"))
+    if record:
+        return jsonify(api_record(record, "postgres_cache"))
+    try:
+        record = lookup_live(address)
+    except Exception as exc:
+        # Say what happened. A lookup that could not complete is not the same
+        # as a token that does not exist, and must not read as either a clean
+        # result or a missing one.
+        return jsonify({
+            "ok": False,
+            "error": "live_lookup_failed",
+            "detail": type(exc).__name__,
+            "chain": "tron",
+            "address": address,
+        }), 502
+    return jsonify(api_record(record, "live_lookup"))
 
 
 @app.route("/api/tron/scan", methods=["POST", "OPTIONS"])
