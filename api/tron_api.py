@@ -25,6 +25,9 @@ os.environ.setdefault("TRON_TELEGRAM_BOT_TOKEN", "")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "")
 
 from chains.tron import tron_collector_v1 as tron  # noqa: E402
+from api.build_identity import build_identity  # noqa: E402
+from api.evidence import build_evidence  # noqa: E402
+from api.plain_language import describe  # noqa: E402
 
 app = Flask(__name__)
 
@@ -83,7 +86,8 @@ def cia_flags(record: dict[str, Any]) -> dict[str, Any]:
 def api_record(record: dict[str, Any], source: str) -> dict[str, Any]:
     address = record.get("contract_address") or record.get("address") or ""
     confidence = record.get("confidence") or {"level": "UNKNOWN"}
-    return {
+    flags = cia_flags(record)
+    response = {
         "ok": True,
         "chain": "tron",
         "address": address,
@@ -99,10 +103,17 @@ def api_record(record: dict[str, Any], source: str) -> dict[str, Any]:
             "status": record.get("metadata_status"),
             "error": record.get("metadata_error", ""),
         },
-        "cia_flags": cia_flags(record),
+        "cia_flags": flags,
         "source": source,
         "scanner": record.get("collector") or "tron_collector_v1",
     }
+    # Which code answered, what each module managed to read, and a sentence
+    # saying which kind of answer this is. Additive: no verdict field is read
+    # or written here.
+    response.update(build_identity())
+    response["evidence"] = build_evidence(record, flags)
+    response.update(describe(response))
+    return response
 
 
 def scan_feed_item(row: dict[str, Any]) -> dict[str, Any]:
